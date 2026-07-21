@@ -2,6 +2,15 @@
 
 ## [Unreleased] — 2026-07-21
 
+### 项目工程化
+- Git 初始化 + 远程仓库 `https://github.com/beluga11716/suijitiku`
+- `.gitignore` 加固：排除 `*.docx *.doc *.pdf *.txt *.zip`，防止用户题库文件和发布包泄露
+- Windows 构建 & 打包流程：`flutter build windows --release` → zip → GitHub Release
+- Android APK 构建已就绪（缺 Android SDK 环境，待用户安装 Android Studio）
+
+### 数据重置
+- 删除 SQLite 数据库文件，应用重启自动重建空库（还原至无题库状态）
+
 ### 错题本按题库分组
 - 错题本第一页改为题库列表（只显示有错题的题库），点击进入该题库的错题详情
 - 不同题库的错题完全隔离：统计、刷错题、清空均按题库作用域

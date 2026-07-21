@@ -4,6 +4,8 @@
 
 跨平台刷题应用（Windows + Android），Flutter 3.x + Dart。功能：导入 Word/PDF 题库 → 自动解析 → 随机抽题 → 错题本 → AI 精选模式。GPL-3.0 开源，纯本地，无账号系统。
 
+**仓库**: `https://github.com/beluga11716/suijitiku`
+
 ## 技术栈
 
 | 层 | 选型 |
@@ -131,6 +133,31 @@ Dialog 内 TextField 有焦点时点击按钮（取消/保存/开始），按钮
 **关键原则**：TextEditingController 必须由 StatefulWidget 的 `State.dispose()` 管理，不要用 `showDialog(...).then((_) => controller.dispose())`——它在退出动画期间触发，此时 TextField 仍在树中。
 
 涉及文件：`test_list_screen.dart`（重命名保存按钮）、`wrong_book_test_list_screen.dart`（重命名保存 + 创建 dialog 重构为 `_CreateWrongBookDialog`）。
+
+### 16. `.gitignore` 必须排除用户导入文件
+
+用户导入的 `.docx`/`.pdf`/`.txt` 题库文件是用户私有数据，绝不能入库。当前 `.gitignore` 已添加 `*.docx *.doc *.pdf *.txt *.zip`。
+新增类似文件类型时务必同步更新 `.gitignore`。
+
+## 构建 & 发布
+
+```powershell
+# Windows
+flutter build windows --release
+# 输出: build/windows/x64/runner/Release/randomselector.exe
+# 打包: 压缩 Release 目录（含 flutter_windows.dll, sqlite3.dll, data/）
+Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "randomselector-v1.0.0-windows.zip"
+
+# Android（需 Android SDK）
+flutter build apk --release
+# 输出: build/app/outputs/flutter-apk/app-release.apk
+```
+
+**发布到 GitHub Releases**：
+1. `git push`
+2. 打开 `https://github.com/beluga11716/suijitiku/releases` → Draft a new release
+3. Tag 版本号（如 `v1.0.0`），上传 zip/apk
+4. Publish release
 
 ### 13. `returnTo` query parameter —— quiz 退出回到发起页
 

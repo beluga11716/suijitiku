@@ -6,6 +6,16 @@ Flutter 3.44+ 跨平台刷题应用，纯本地 SQLite。当前处于功能完�
 
 ## 本次会话完成的工作 (2026-07-21)
 
+### Git 仓库 & 发布
+- Git 初始化并提交（80 files, `e72b431`），远程 `https://github.com/beluga11716/suijitiku`
+- `.gitignore` 加固：新增 `*.docx *.doc *.pdf *.txt`（防止用户题库文件泄露）+ `*.zip`（防止发布包入库）
+- Windows release 编译：`flutter build windows --release` → `build/windows/x64/runner/Release/randomselector.exe`
+- 打包脚本：PowerShell `Compress-Archive` 将 `flutter_windows.dll` + `sqlite3.dll` + `data/` + `randomselector.exe` 打包为 `randomselector-v1.0.0-windows.zip` (~14MB)
+- GitHub Release 手动上传流程：`git push` → GitHub Releases 页 → 创建 tag → 上传 zip → Publish
+
+### 数据重置
+- 删除 `.dart_tool/sqflite_common_ffi/databases/randomselector.db`，应用重启后自动重建空库
+
 ### 错题本按题库分组
 - **新流程**：`/wrongbook` → 题库列表（只显示有错题的题库，卡片样式类 `BankListScreen`）→ 点击进入 `/wrongbook/:bankId` → 该题库的错题详情
 - 不同题库的错题完全隔离：统计、刷错题、清空均按题库作用域
