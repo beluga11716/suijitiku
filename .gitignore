@@ -48,6 +48,11 @@ app.*.map.json
 # Release archives
 *.zip
 
+# Claude session files (project context, not for release)
+handoff.md
+CLAUDE.md
+CHANGELOG.md
+
 # Android Studio will place build artifacts here
 /android/app/debug
 /android/app/profile
