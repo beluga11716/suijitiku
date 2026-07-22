@@ -18,7 +18,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'randomselector.db');
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -70,6 +70,11 @@ class DatabaseHelper {
         status         TEXT DEFAULT 'in_progress',
         started_at     TEXT NOT NULL,
         completed_at   TEXT,
+        name           TEXT DEFAULT '',
+        current_index  INTEGER DEFAULT 0,
+        source         TEXT DEFAULT 'bank',
+        question_types TEXT,
+        question_ids   TEXT,
         FOREIGN KEY (bank_id) REFERENCES question_banks(id) ON DELETE SET NULL
       )
     ''');
@@ -116,26 +121,19 @@ class DatabaseHelper {
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       // v1 → v2: 测试会话管理系统
-      try {
-        await db.execute(
-            "ALTER TABLE quiz_sessions ADD COLUMN name TEXT");
-      } catch (_) {}
-      try {
-        await db.execute(
-            "ALTER TABLE quiz_sessions ADD COLUMN current_index INTEGER DEFAULT 0");
-      } catch (_) {}
-      try {
-        await db.execute(
-            "ALTER TABLE quiz_sessions ADD COLUMN source TEXT DEFAULT 'bank'");
-      } catch (_) {}
-      try {
-        await db.execute(
-            "ALTER TABLE quiz_sessions ADD COLUMN question_types TEXT");
-      } catch (_) {}
-      try {
-        await db.execute(
-            "ALTER TABLE quiz_sessions ADD COLUMN question_ids TEXT");
-      } catch (_) {}
+      try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN name TEXT"); } catch (_) {}
+      try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN current_index INTEGER DEFAULT 0"); } catch (_) {}
+      try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN source TEXT DEFAULT 'bank'"); } catch (_) {}
+      try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN question_types TEXT"); } catch (_) {}
+      try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN question_ids TEXT"); } catch (_) {}
+    }
+    if (oldVersion < 3) {
+      // v2 → v3: 修复 _onCreate 漏掉的列（v2 新建的库可能缺这些列）
+      try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN name TEXT DEFAULT ''"); } catch (_) {}
+      try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN current_index INTEGER DEFAULT 0"); } catch (_) {}
+      try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN source TEXT DEFAULT 'bank'"); } catch (_) {}
+      try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN question_types TEXT"); } catch (_) {}
+      try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN question_ids TEXT"); } catch (_) {}
     }
   }
 
