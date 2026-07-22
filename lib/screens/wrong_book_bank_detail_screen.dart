@@ -349,7 +349,7 @@ class _CreateWrongBookDialogState extends State<_CreateWrongBookDialog> {
             value: _selectedCount.toDouble(),
             min: 1,
             max: widget.totalCount.toDouble(),
-            divisions: widget.totalCount - 1,
+            divisions: widget.totalCount > 1 ? widget.totalCount - 1 : null,
             label: '$_selectedCount',
             onChanged: (v) =>
                 setState(() => _selectedCount = v.round()),
