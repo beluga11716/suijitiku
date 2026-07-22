@@ -347,7 +347,7 @@ class _TestListScreenState extends State<TestListScreen>
         title: Text(name,
             maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(
-          '$progress · $dateStr · ${session.mode == 'featured' ? 'AI精选' : '随机'}',
+          '$progress · $dateStr · ${session.mode == 'featured' ? 'AI精选' : '随机'} · ${session.quizStyle == 'exam' ? '试卷' : '逐题'}',
         ),
         trailing: _selecting
             ? null

@@ -338,7 +338,7 @@ class _WrongBookTestListScreenState extends State<WrongBookTestListScreen>
         title: Text(name,
             maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(
-          '$progress · $dateStr',
+          '$progress · $dateStr · 随机 · ${session.quizStyle == 'exam' ? '试卷' : '逐题'}',
         ),
         trailing: _selecting
             ? null
