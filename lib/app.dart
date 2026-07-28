@@ -1,14 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'screens/home_screen.dart';
-import 'screens/bank_list_screen.dart';
 import 'screens/test_list_screen.dart';
-import 'screens/test_create_screen.dart';
 import 'screens/quiz_screen.dart';
 import 'screens/result_screen.dart';
 import 'screens/wrong_book_screen.dart';
-import 'screens/wrong_book_bank_detail_screen.dart';
-import 'screens/wrong_book_test_list_screen.dart';
 import 'screens/settings_screen.dart';
 
 class RandomSelectorApp extends StatelessWidget {
@@ -46,30 +42,8 @@ final _router = GoRouter(
           builder: (context, state) => const HomeScreen(),
         ),
         GoRoute(
-          path: '/banks',
-          builder: (context, state) => const BankListScreen(),
-        ),
-        GoRoute(
-          path: '/banks/:bankId/tests',
-          builder: (context, state) => TestListScreen(
-            bankId: state.pathParameters['bankId']!,
-          ),
-        ),
-        GoRoute(
-          path: '/banks/:bankId/tests/create',
-          builder: (context, state) => TestCreateScreen(
-            bankId: state.pathParameters['bankId']!,
-          ),
-        ),
-        GoRoute(
-          path: '/wrongbook/tests',
-          builder: (context, state) => const WrongBookTestListScreen(),
-        ),
-        GoRoute(
-          path: '/wrongbook/:bankId',
-          builder: (context, state) => WrongBookBankDetailScreen(
-            bankId: state.pathParameters['bankId']!,
-          ),
+          path: '/tests',
+          builder: (context, state) => const TestListScreen(),
         ),
         GoRoute(
           path: '/quiz/:sessionId',
@@ -119,9 +93,9 @@ class AppScaffold extends StatelessWidget {
                   label: '首页',
                 ),
                 NavigationDestination(
-                  icon: Icon(Icons.library_books_outlined),
-                  selectedIcon: Icon(Icons.library_books),
-                  label: '题库',
+                  icon: Icon(Icons.assignment_outlined),
+                  selectedIcon: Icon(Icons.assignment),
+                  label: '刷题',
                 ),
                 NavigationDestination(
                   icon: Icon(Icons.error_outline_outlined),
@@ -143,24 +117,9 @@ class AppScaffold extends StatelessWidget {
   bool _shouldShowNav(BuildContext context) {
     try {
       final location = GoRouterState.of(context).uri.toString();
-      // 刷题页面全屏
-      if (location.startsWith('/quiz/')) {
-        return false;
-      }
-      if (location.startsWith('/result')) {
-        return false;
-      }
-      // 测试列表/创建页全屏
-      if (location.startsWith('/banks/') && location.contains('/tests')) {
-        return false;
-      }
-      if (location.startsWith('/wrongbook/tests')) {
-        return false;
-      }
-      // 错题本按题库查看详情页全屏
-      if (RegExp(r'^/wrongbook/[^/]+$').hasMatch(location)) {
-        return false;
-      }
+      // 仅刷题中和结果页全屏隐藏导航栏
+      if (location.startsWith('/quiz/')) return false;
+      if (location.startsWith('/result')) return false;
       return true;
     } catch (_) {
       return true;
@@ -170,15 +129,9 @@ class AppScaffold extends StatelessWidget {
   int _calculateSelectedIndex(BuildContext context) {
     try {
       final location = GoRouterState.of(context).uri.toString();
-      if (location.startsWith('/banks')) {
-        return 1;
-      }
-      if (location.startsWith('/wrongbook')) {
-        return 2;
-      }
-      if (location.startsWith('/settings')) {
-        return 3;
-      }
+      if (location.startsWith('/tests')) return 1;
+      if (location.startsWith('/wrongbook')) return 2;
+      if (location.startsWith('/settings')) return 3;
       return 0;
     } catch (_) {
       return 0;
@@ -190,7 +143,7 @@ class AppScaffold extends StatelessWidget {
       case 0:
         context.go('/');
       case 1:
-        context.go('/banks');
+        context.go('/tests');
       case 2:
         context.go('/wrongbook');
       case 3:

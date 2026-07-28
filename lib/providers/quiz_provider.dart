@@ -136,17 +136,9 @@ class QuizProvider extends ChangeNotifier {
       }
     }
 
-    _currentSession = QuizSession(
-      id: _currentSession!.id,
-      bankId: _currentSession!.bankId,
-      mode: _currentSession!.mode,
-      quizStyle: _currentSession!.quizStyle,
-      questionCount: _currentSession!.questionCount,
+    _currentSession = _currentSession!.copyWith(
       correctCount: correct,
       wrongCount: wrong,
-      status: _currentSession!.status,
-      startedAt: _currentSession!.startedAt,
-      completedAt: _currentSession!.completedAt,
     );
     await _dao.updateSession(_currentSession!);
 
@@ -224,16 +216,10 @@ class QuizProvider extends ChangeNotifier {
       }
     }
 
-    _currentSession = QuizSession(
-      id: _currentSession!.id,
-      bankId: _currentSession!.bankId,
-      mode: _currentSession!.mode,
-      quizStyle: _currentSession!.quizStyle,
-      questionCount: _currentSession!.questionCount,
+    _currentSession = _currentSession!.copyWith(
       correctCount: correct,
       wrongCount: wrong,
       status: 'completed',
-      startedAt: _currentSession!.startedAt,
       completedAt: DateTime.now(),
     );
     await _dao.updateSession(_currentSession!);
@@ -244,16 +230,8 @@ class QuizProvider extends ChangeNotifier {
 
   /// 完成会话
   Future<void> completeSession() async {
-    _currentSession = QuizSession(
-      id: _currentSession!.id,
-      bankId: _currentSession!.bankId,
-      mode: _currentSession!.mode,
-      quizStyle: _currentSession!.quizStyle,
-      questionCount: _currentSession!.questionCount,
-      correctCount: _currentSession!.correctCount,
-      wrongCount: _currentSession!.wrongCount,
+    _currentSession = _currentSession!.copyWith(
       status: 'completed',
-      startedAt: _currentSession!.startedAt,
       completedAt: DateTime.now(),
     );
     await _dao.updateSession(_currentSession!);
@@ -405,7 +383,9 @@ class QuizProvider extends ChangeNotifier {
       }
 
       List<Question> allQuestions;
-      if (session.source == 'wrongbook') {
+      if (session.source == 'wrongbook' && session.bankId != null) {
+        allQuestions = await _dao.getWrongQuestionsByBank(session.bankId!);
+      } else if (session.source == 'wrongbook') {
         allQuestions = await _dao.getWrongQuestions();
       } else if (session.bankId != null) {
         allQuestions = await _dao.getBankQuestions(session.bankId!);

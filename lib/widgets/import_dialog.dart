@@ -77,20 +77,22 @@ class _ImportDialogState extends State<ImportDialog> {
             ),
             const SizedBox(height: 12),
 
-            // 解析统计
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
+            // 解析统计（横向可滚动，防止长文本溢出）
+            SizedBox(
+              height: 32,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 children: [
                   _StatChip(
                       label: '总计',
                       value: '${widget.questions.length} 题'),
                   const SizedBox(width: 8),
-                  ...typeCount.entries.map((e) => Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _StatChip(
+                  ...typeCount.entries.expand((e) => [
+                        _StatChip(
                             label: e.key, value: '${e.value} 题'),
-                      )),
+                        const SizedBox(width: 8),
+                      ]),
                 ],
               ),
             ),
