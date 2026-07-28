@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// PDF 解析器
 ///
 /// 使用 syncfusion_flutter_pdf 提取文本。
@@ -11,7 +13,13 @@ class PdfParser {
     try {
       // 降级方案：搜索 PDF 流中的可打印文本
       // PDF 文本通常在 BT...ET 块中，在 Tj/TJ 操作符里
-      final content = String.fromCharCodes(bytes);
+      // PDF 文本提取：先用 utf-8 解码，失败则回退 latin-1（保留原始字节）
+      String content;
+      try {
+        content = utf8.decode(bytes);
+      } catch (_) {
+        content = latin1.decode(bytes);
+      }
 
       // 提取 BT...ET 块中的文本
       final btPattern = RegExp(r'BT(.*?)ET', dotAll: true);

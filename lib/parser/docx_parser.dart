@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:archive/archive.dart';
 
 /// .docx 解析器：将 .docx 文件转换为纯文本
@@ -9,13 +10,17 @@ class DocxParser {
   /// 从字节数组解析 .docx，返回纯文本
   static String parseBytes(List<int> bytes) {
     try {
-      final archive = ZipDecoder().decodeBytes(bytes);
+      // 确保输入是 Uint8List：archive 3.x 在 Android 上对 List<int> 可能有类型问题
+      final input = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+      final archive = ZipDecoder().decodeBytes(input);
       final documentXml = archive.findFile('word/document.xml');
       if (documentXml == null) {
         throw Exception('无效的 .docx 文件：找不到 word/document.xml');
       }
 
-      final xmlContent = utf8.decode(documentXml.content as List<int>);
+      // content getter 返回 dynamic (实际为 Uint8List)，用 Uint8List.fromList 确保类型一致
+      final contentBytes = Uint8List.fromList(documentXml.content);
+      final xmlContent = utf8.decode(contentBytes);
 
       // 简单正则提取所有 <w:t> 标签内的文本
       // 同时处理 <w:p> 段落边界（插入换行）

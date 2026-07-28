@@ -72,12 +72,12 @@ class _ResultScreenState extends State<ResultScreen> {
             .toStringAsFixed(1)
         : '0';
 
-    // 根据 source 决定返回路径，已完成测试返回时切到已完成 tab
+    // 根据 source 决定返回路径
+    // 错题测试 → 错题测试列表（已完成 tab）
+    // 题库测试 → 刷题列表（已完成 tab）
     final backPath = _session!.source == 'wrongbook'
-        ? '/wrongbook/tests?tab=1'
-        : (_session!.bankId != null
-            ? '/banks/${_session!.bankId}/tests?tab=1'
-            : '/');
+        ? '/wrongbook?sub=tests&tab=1'
+        : '/tests?tab=1';
 
     return Scaffold(
       appBar: AppBar(

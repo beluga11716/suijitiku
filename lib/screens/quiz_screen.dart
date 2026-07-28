@@ -16,29 +16,73 @@ class QuizScreen extends StatefulWidget {
 }
 
 class _QuizScreenState extends State<QuizScreen> {
+  void _showExitDialog(BuildContext context) {
+    final quiz = context.read<QuizProvider>();
+    showDialog(
+      context: context,
+      useRootNavigator: true,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('退出刷题'),
+        content: const Text('退出后可在测试列表中继续刷题'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              await quiz.saveAndExit();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (context.mounted) {
+                  context.go(widget.returnTo ?? '/');
+                }
+              });
+            },
+            child: const Text('保存并退出'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final quiz = context.watch<QuizProvider>();
 
+    Widget body;
     if (quiz.loading) {
-      return Scaffold(
+      body = Scaffold(
         appBar: AppBar(title: const Text('刷题中')),
         body: const Center(child: CircularProgressIndicator()),
       );
-    }
-
-    if (quiz.currentSession == null) {
-      return Scaffold(
+    } else if (quiz.currentSession == null) {
+      body = Scaffold(
         appBar: AppBar(title: const Text('刷题')),
         body: const Center(child: Text('会话不存在')),
       );
+    } else if (quiz.isExamMode) {
+      body = _ExamModeView(quiz: quiz, returnTo: widget.returnTo);
+    } else {
+      body = _PerQuestionView(quiz: quiz, returnTo: widget.returnTo);
     }
 
-    if (quiz.isExamMode) {
-      return _ExamModeView(quiz: quiz, returnTo: widget.returnTo);
-    } else {
-      return _PerQuestionView(quiz: quiz, returnTo: widget.returnTo);
-    }
+    // BackButtonListener 在系统级拦截返回键（Android 返回键/手势），
+    // 在通知到达 go_router ShellRoute Navigator 之前就消费掉。
+    // PopScope 作为次级防御：拦截任何漏网的 Navigator.pop 调用。
+    return BackButtonListener(
+      onBackButtonPressed: () async {
+        _showExitDialog(context);
+        return true;
+      },
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) _showExitDialog(context);
+        },
+        child: body,
+      ),
+    );
   }
 }
 
@@ -186,10 +230,14 @@ class _PerQuestionViewState extends State<_PerQuestionView> {
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(dialogContext);
-              widget.quiz.saveAndExit();
-              context.go(widget.returnTo ?? '/');
+              await widget.quiz.saveAndExit();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (context.mounted) {
+                  context.go(widget.returnTo ?? '/');
+                }
+              });
             },
             child: const Text('保存并退出'),
           ),
@@ -295,10 +343,14 @@ class _ExamModeView extends StatelessWidget {
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(dialogContext);
-              quiz.saveAndExit();
-              context.go(returnTo ?? '/');
+              await quiz.saveAndExit();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (context.mounted) {
+                  context.go(returnTo ?? '/');
+                }
+              });
             },
             child: const Text('保存并退出'),
           ),

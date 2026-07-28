@@ -124,12 +124,12 @@ class Dao {
     return maps.map((m) => QuizSession.fromMap(m)).toList();
   }
 
-  /// 获取某题库的测试列表（不含错题测试）
+  /// 获取某题库的测试列表（含错题测试）
   Future<List<QuizSession>> getSessionsByBank(String bankId) async {
     final db = await _dbHelper.database;
     final maps = await db.query('quiz_sessions',
-        where: 'bank_id = ? AND (source = ? OR source IS NULL)',
-        whereArgs: [bankId, 'bank'],
+        where: 'bank_id = ?',
+        whereArgs: [bankId],
         orderBy: 'started_at DESC');
     return maps.map((m) => QuizSession.fromMap(m)).toList();
   }

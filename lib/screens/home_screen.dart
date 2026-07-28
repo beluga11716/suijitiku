@@ -1,9 +1,18 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import 'package:file_picker/file_picker.dart';
 import '../providers/bank_provider.dart';
+import '../providers/current_bank_provider.dart';
 import '../providers/wrong_book_provider.dart';
 import '../database/dao.dart';
+import '../parser/docx_parser.dart';
+import '../parser/pdf_parser.dart';
+import '../parser/question_extractor.dart';
+import '../ai/rule_engine.dart';
+import '../widgets/import_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -29,12 +38,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadStats() async {
     final bankProv = context.read<BankProvider>();
     final wrongProv = context.read<WrongBookProvider>();
+    final currentProv = context.read<CurrentBankProvider>();
     final totalQuestions = await _dao.getTotalQuestionCount();
     final totalBanks = await _dao.getTotalBankCount();
     final totalQuizzes = await _dao.getTotalQuizCount();
     final accuracy = await _dao.getOverallAccuracy();
     await bankProv.loadBanks();
     await wrongProv.loadWrongQuestions();
+    await currentProv.init();
 
     if (mounted) {
       setState(() {
@@ -47,9 +58,150 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // ==================== 导入逻辑 ====================
+
+  Future<void> _importFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['docx', 'pdf', 'doc', 'txt'],
+    );
+
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    if (file.path == null) return;
+    if (!mounted) return;
+    _showImportPreview(file.name, file.path!);
+  }
+
+  Future<void> _showImportPreview(String fileName, String filePath) async {
+    try {
+      final bytes = await File(filePath).readAsBytes();
+      final ext = fileName.split('.').last.toLowerCase();
+
+      String text;
+      if (ext == 'docx') {
+        text = DocxParser.parseBytes(bytes);
+      } else if (ext == 'pdf') {
+        text = PdfParser.parseBytes(bytes);
+      } else if (ext == 'txt') {
+        text = utf8.decode(bytes);
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('不支持的文件格式')));
+        return;
+      }
+
+      final questions = QuestionExtractor.extract(text);
+      if (!mounted) return;
+
+      final result = await showDialog<ImportResult>(
+          context: context,
+          useRootNavigator: true,
+          builder: (dialogContext) => ImportDialog(
+              fileName: fileName, questions: questions, rawText: text));
+
+      if (result == null || !mounted) return;
+
+      final bankName = result.bankName.isEmpty ? fileName : result.bankName;
+
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final tempQuestions = result.questions
+          .asMap()
+          .entries
+          .map((e) => e.value.toQuestion(
+                id: '${now}_${e.key}',
+                bankId: 'temp',
+              ))
+          .toList();
+
+      final scoredQuestions = RuleEngine.score(tempQuestions);
+
+      await context.read<BankProvider>().importBank(
+            name: bankName,
+            sourceFile: fileName,
+            sourceType: ext,
+            questions: scoredQuestions,
+          );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导入成功：${result.questions.length} 道题')),
+      );
+
+      // 如果这是第一个题库，自动选中
+      final currentProv = context.read<CurrentBankProvider>();
+      if (!currentProv.hasBank) {
+        final banks = context.read<BankProvider>().banks;
+        if (banks.isNotEmpty) {
+          currentProv.selectBank(banks.first.id);
+        }
+      }
+
+      // 刷新统计
+      await _loadStats();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导入失败: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  // ==================== 题库管理 ====================
+
+  Future<void> _deleteBank(String id, String name) async {
+    final confirmed = await showDialog<bool>(
+        context: context,
+        useRootNavigator: true,
+        builder: (dialogContext) => AlertDialog(
+              title: const Text('确认删除'),
+              content: Text('确定要删除题库"$name"吗？\n题库中的题目也会被删除。'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('取消')),
+                FilledButton(
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text('删除')),
+              ],
+            ));
+
+    if (confirmed == true && mounted) {
+      final currentProv = context.read<CurrentBankProvider>();
+      final wasCurrent = currentProv.currentBankId == id;
+      await context.read<BankProvider>().deleteBank(id);
+      if (wasCurrent && mounted) {
+        final banks = context.read<BankProvider>().banks;
+        if (banks.isNotEmpty) {
+          currentProv.selectBank(banks.first.id);
+        }
+      }
+      await _loadStats();
+    }
+  }
+
+  Future<void> _renameBank(String id, String currentName) async {
+    final newName = await showDialog<String>(
+      context: context,
+      useRootNavigator: true,
+      builder: (_) => _RenameBankDialog(currentName: currentName),
+    );
+    if (newName != null && newName.isNotEmpty && newName != currentName) {
+      final bank = await _dao.getBank(id);
+      if (bank != null && mounted) {
+        await _dao.updateBank(bank.copyWith(name: newName));
+        await context.read<BankProvider>().loadBanks();
+      }
+    }
+  }
+
+  // ==================== UI ====================
+
   @override
   Widget build(BuildContext context) {
     final banks = context.watch<BankProvider>().banks;
+    final currentBankId = context.watch<CurrentBankProvider>().currentBankId;
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -62,6 +214,10 @@ class _HomeScreenState extends State<HomeScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            // 题库切换器 + 导入按钮
+            _buildBankSwitcher(banks, currentBankId, theme),
+            const SizedBox(height: 16),
+
             // 统计卡片
             _StatsGrid(
               totalBanks: _totalBanks,
@@ -85,58 +241,205 @@ class _HomeScreenState extends State<HomeScreen> {
                   trailing: FilledButton(
                     onPressed: () => context.go('/wrongbook'),
                     style: FilledButton.styleFrom(
-                        backgroundColor:
-                            theme.colorScheme.onErrorContainer,
-                        foregroundColor:
-                            theme.colorScheme.errorContainer),
+                        backgroundColor: theme.colorScheme.onErrorContainer,
+                        foregroundColor: theme.colorScheme.errorContainer),
                     child: const Text('去复习'),
                   ),
                 ),
               ),
             if (_wrongCount > 0) const SizedBox(height: 24),
 
-            // 快速选择题库
-            Text('选择题库开始刷题',
-                style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 12),
-
+            // 题库统计卡片区
             if (banks.isEmpty)
-              const Card(
+              Card(
                 child: Padding(
-                  padding: EdgeInsets.all(32),
+                  padding: const EdgeInsets.all(32),
                   child: Column(
                     children: [
                       Icon(Icons.library_books_outlined,
-                          size: 48, color: Colors.grey),
-                      SizedBox(height: 8),
-                      Text('还没有题库，去导入一份吧',
-                          style: TextStyle(color: Colors.grey)),
+                          size: 48, color: theme.colorScheme.outline),
+                      const SizedBox(height: 8),
+                      Text('还没有题库，点击上方 + 导入一份吧',
+                          style: TextStyle(
+                              color: theme.colorScheme.outline,
+                              fontSize: 14)),
                     ],
                   ),
                 ),
               )
             else
-              ...banks.take(10).map((bank) => Card(
-                    child: ListTile(
-                      title: Text(bank.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis),
-                      subtitle: Text(
-                          '${bank.questionCount} 道题 · ${_formatDate(bank.createdAt)}'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () =>
-                          context.go('/banks/${bank.id}/tests'),
-                    ),
-                  )),
+              ...banks.map((bank) {
+                final isCurrent = bank.id == currentBankId;
+                return _buildBankCard(bank, isCurrent, theme);
+              }),
           ],
         ),
       ),
     );
   }
 
+  Widget _buildBankSwitcher(
+      List<dynamic> banks, String? currentBankId, ThemeData theme) {
+    final hasBanks = banks.isNotEmpty;
+
+    return Row(
+      children: [
+        // 题库切换下拉
+        Expanded(
+          child: hasBanks
+              ? Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: theme.colorScheme.outline),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: DropdownButton<String>(
+                    value: currentBankId,
+                    isExpanded: true,
+                    underline: const SizedBox(),
+                    items: banks.map<DropdownMenuItem<String>>((bank) {
+                      return DropdownMenuItem<String>(
+                        value: bank.id,
+                        child: Text(bank.name as String,
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
+                      );
+                    }).toList(),
+                    onChanged: (v) {
+                      if (v != null) {
+                        context.read<CurrentBankProvider>().selectBank(v);
+                      }
+                    },
+                  ),
+                )
+              : Card(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 16),
+                    child: Text('请先导入题库',
+                        style: TextStyle(
+                            color: theme.colorScheme.outline, fontSize: 14)),
+                  ),
+                ),
+        ),
+        const SizedBox(width: 8),
+        // 导入按钮
+        IconButton.filled(
+          onPressed: _importFile,
+          icon: const Icon(Icons.add),
+          tooltip: '导入题库',
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBankCard(dynamic bank, bool isCurrent, ThemeData theme) {
+    final bankName = bank.name as String;
+    final questionCount = bank.questionCount as int;
+    final sourceFile = bank.sourceFile as String? ?? '';
+    final dateStr = _formatDate(bank.createdAt);
+
+    return Card(
+      color: isCurrent
+          ? theme.colorScheme.primaryContainer.withValues(alpha: 0.5)
+          : null,
+      child: ListTile(
+        leading: isCurrent
+            ? Icon(Icons.check_circle,
+                color: theme.colorScheme.primary, size: 28)
+            : Icon(Icons.library_books_outlined,
+                color: theme.colorScheme.outline, size: 28),
+        title: Text(bankName, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text('$questionCount 道题 · $dateStr${sourceFile.isNotEmpty ? ' · $sourceFile' : ''}'),
+        trailing: PopupMenuButton<String>(
+          onSelected: (v) {
+            if (v == 'rename') _renameBank(bank.id, bankName);
+            if (v == 'delete') _deleteBank(bank.id, bankName);
+          },
+          itemBuilder: (_) => [
+            const PopupMenuItem(
+              value: 'rename',
+              child: Row(children: [
+                Icon(Icons.edit, size: 20),
+                SizedBox(width: 8),
+                Text('重命名'),
+              ]),
+            ),
+            const PopupMenuItem(
+              value: 'delete',
+              child: Row(children: [
+                Icon(Icons.delete, size: 20, color: Colors.red),
+                SizedBox(width: 8),
+                Text('删除', style: TextStyle(color: Colors.red)),
+              ]),
+            ),
+          ],
+        ),
+        onTap: () {
+          context.read<CurrentBankProvider>().selectBank(bank.id);
+        },
+      ),
+    );
+  }
+
   String _formatDate(DateTime dt) {
     return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+  }
+}
+
+// ==================== 重命名对话框（独立 StatefulWidget） ====================
+
+class _RenameBankDialog extends StatefulWidget {
+  final String currentName;
+  const _RenameBankDialog({required this.currentName});
+
+  @override
+  State<_RenameBankDialog> createState() => _RenameBankDialogState();
+}
+
+class _RenameBankDialogState extends State<_RenameBankDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.currentName);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _pop([String? value]) {
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => Navigator.pop(context, value));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('重命名题库'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        decoration: const InputDecoration(
+          labelText: '题库名称',
+          border: OutlineInputBorder(),
+        ),
+        onSubmitted: (v) => _pop(v.trim()),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => _pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => _pop(_controller.text.trim()),
+          child: const Text('保存'),
+        ),
+      ],
+    );
   }
 }
 
@@ -161,9 +464,7 @@ class _StatsGrid extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(child: _StatCard(label: '题目', value: '$totalQuestions')),
         const SizedBox(width: 8),
-        Expanded(
-            child:
-                _StatCard(label: '已刷', value: '$totalQuizzes 次')),
+        Expanded(child: _StatCard(label: '已刷', value: '$totalQuizzes 次')),
         const SizedBox(width: 8),
         Expanded(
             child: _StatCard(
