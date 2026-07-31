@@ -2,6 +2,8 @@
 
 跨平台刷题应用，支持 Windows 和 Android。导入 Word/PDF 题库文档，自动解析题目，随机抽题刷题，错题本管理。
 
+这个项目基本全部都由claude CLI加DeepSeek-v4-pro来完成 这也是我vibecoding出的第一个项目 可能有漏洞或bug 有的话和我提issue吧
+
 ## 功能
 
 - **题库导入**：支持 `.docx`、`.pdf` 格式，自动解析章节、题型、题干、选项、答案
