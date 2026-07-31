@@ -72,7 +72,7 @@ class _RandomSelectorAppState extends State<RandomSelectorApp> {
     final themeMode = settings.themeType.toThemeMode;
 
     return MaterialApp.router(
-      title: '题库抽题器',
+      title: '题库抽取器',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
