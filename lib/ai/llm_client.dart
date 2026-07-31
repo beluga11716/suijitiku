@@ -14,25 +14,56 @@ class LlmClient {
     required this.modelName,
   });
 
-  /// 批量分析题目，返回三维评分
+  /// 默认 Prompt 模板。占位符 {questions_json} 会被替换为题目 JSON 数组。
+  static const defaultPrompt = '''你是一个题库分析助手。请分析以下题目，判断每道题是否符合"核心重点题"的标准：
+
+标准：
+- 涉及核心概念、原理、定义
+- 属于常考、易错、重点知识点
+- 具有较高的学习价值
+
+请返回 JSON 格式：
+{"selected": [{"id": "题目id", "score": 0.0-1.0, "reason": "一句话理由"}, ...]}
+
+只返回匹配的题目（score > 0），不匹配的不要返回。
+
+题目列表：
+{questions_json}''';
+
+  /// 批量分析题目，返回更新后的题目列表
   ///
   /// 每批最多发送 20 道题，避免 token 超限。
-  Future<List<Question>> analyzeQuestions(List<Question> questions) async {
+  /// [customPrompt] 自定义 prompt，用 {questions_json} 作为题目列表占位符。
+  /// [onProgress] 每批次完成回调 (completed, total)。
+  /// [isCancelled] 返回 true 时中断分析。
+  Future<List<Question>> analyzeQuestions(
+    List<Question> questions, {
+    String? customPrompt,
+    void Function(int completed, int total)? onProgress,
+    bool Function()? isCancelled,
+  }) async {
     const batchSize = 20;
     final results = <Question>[];
+    final totalBatches = (questions.length / batchSize).ceil();
 
     for (int i = 0; i < questions.length; i += batchSize) {
+      if (isCancelled?.call() == true) break;
+
       final batch = questions.sublist(
           i, (i + batchSize).clamp(0, questions.length));
-      final scored = await _analyzeBatch(batch);
+      final scored = await _analyzeBatch(batch, customPrompt: customPrompt);
       results.addAll(scored);
+      onProgress?.call((i ~/ batchSize) + 1, totalBatches);
     }
 
     return results;
   }
 
-  Future<List<Question>> _analyzeBatch(List<Question> batch) async {
-    final prompt = _buildPrompt(batch);
+  Future<List<Question>> _analyzeBatch(
+    List<Question> batch, {
+    String? customPrompt,
+  }) async {
+    final prompt = _buildPrompt(batch, customPrompt: customPrompt);
 
     final url = '${_normalizeUrl(baseUrl)}/v1/chat/completions';
 
@@ -73,7 +104,7 @@ class LlmClient {
     }
   }
 
-  String _buildPrompt(List<Question> batch) {
+  String _buildPrompt(List<Question> batch, {String? customPrompt}) {
     final questionsJson = batch.map((q) => {
           'id': q.id,
           'type': q.type.label,
@@ -82,48 +113,36 @@ class LlmClient {
           'answer': q.answer,
         }).toList();
 
-    return '''
-请对以下每道题目进行三维评分（0.0 到 1.0）：
-
-1. difficulty_score（难度）：题目难度，考虑题干复杂程度、选项迷惑性
-2. importance_score（重要性）：是否为常考/重点/核心知识点
-3. theory_score（理论性）：是否涉及概念、原理、定义等理论知识
-
-评分标准：
-- 0.0~0.3: 低
-- 0.3~0.6: 中
-- 0.6~1.0: 高
-
-返回格式：{"scores": {"题目id": {"difficulty": x, "importance": x, "theory": x}, ...}}
-
-题目列表：
-${jsonEncode(questionsJson)}
-''';
+    final template = customPrompt ?? defaultPrompt;
+    return template.replaceAll('{questions_json}', jsonEncode(questionsJson));
   }
 
   List<Question> _applyScores(
       List<Question> batch, Map<String, dynamic> scores) {
-    final scoreMap = scores['scores'] as Map<String, dynamic>? ?? {};
+    // 新格式: {"selected": [{"id": "...", "score": 0.85, "reason": "..."}, ...]}
+    final selected = scores['selected'] as List<dynamic>? ?? [];
+
+    // Build lookup: questionId -> {score, reason}
+    final scoreMap = <String, Map<String, dynamic>>{};
+    for (final item in selected) {
+      if (item is Map<String, dynamic>) {
+        final id = item['id'] as String?;
+        if (id != null) {
+          scoreMap[id] = item;
+        }
+      }
+    }
 
     return batch.map((q) {
-      final s = scoreMap[q.id] as Map<String, dynamic>?;
-      if (s == null) return q;
+      final s = scoreMap[q.id];
+      if (s == null) return q; // 未被选中，分数保持 0
 
-      final difficulty =
-          (s['difficulty'] as num?)?.toDouble() ?? q.difficultyScore;
-      final importance =
-          (s['importance'] as num?)?.toDouble() ?? q.importanceScore;
-      final theory =
-          (s['theory'] as num?)?.toDouble() ?? q.theoryScore;
-      final featured =
-          (difficulty * 0.4 + importance * 0.35 + theory * 0.25)
-              .clamp(0.0, 1.0);
-
+      final score = (s['score'] as num?)?.toDouble() ?? 0.0;
       return q.copyWith(
-        difficultyScore: difficulty,
-        importanceScore: importance,
-        theoryScore: theory,
-        featuredScore: featured,
+        difficultyScore: score,
+        importanceScore: score,
+        theoryScore: score,
+        featuredScore: score,
       );
     }).toList();
   }
@@ -169,5 +188,29 @@ ${jsonEncode(questionsJson)}
 
   String _normalizeUrl(String url) {
     return url.endsWith('/') ? url.substring(0, url.length - 1) : url;
+  }
+
+  /// 从 OpenAI 兼容的 API 获取可用模型列表
+  static Future<List<String>> fetchModels({
+    required String baseUrl,
+    required String apiKey,
+  }) async {
+    final normalized = baseUrl.endsWith('/')
+        ? baseUrl.substring(0, baseUrl.length - 1)
+        : baseUrl;
+    final url = '$normalized/v1/models';
+    final response = await http.get(
+      Uri.parse(url),
+      headers: {'Authorization': 'Bearer $apiKey'},
+    );
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      final models = (data['data'] as List)
+          .map((m) => m['id'] as String)
+          .toList();
+      models.sort();
+      return models;
+    }
+    throw Exception('获取模型列表失败: ${response.statusCode} ${response.body}');
   }
 }

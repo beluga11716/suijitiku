@@ -7,12 +7,14 @@ import 'package:file_picker/file_picker.dart';
 import '../providers/bank_provider.dart';
 import '../providers/current_bank_provider.dart';
 import '../providers/wrong_book_provider.dart';
+import '../providers/settings_provider.dart';
 import '../database/dao.dart';
 import '../parser/docx_parser.dart';
 import '../parser/pdf_parser.dart';
 import '../parser/question_extractor.dart';
-import '../ai/rule_engine.dart';
+import '../ai/llm_client.dart';
 import '../widgets/import_dialog.dart';
+import '../widgets/llm_analysis_progress_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -115,19 +117,14 @@ class _HomeScreenState extends State<HomeScreen> {
               ))
           .toList();
 
-      final scoredQuestions = RuleEngine.score(tempQuestions);
-
       await context.read<BankProvider>().importBank(
             name: bankName,
             sourceFile: fileName,
             sourceType: ext,
-            questions: scoredQuestions,
+            questions: tempQuestions,
           );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('导入成功：${result.questions.length} 道题')),
-      );
 
       // 如果这是第一个题库，自动选中
       final currentProv = context.read<CurrentBankProvider>();
@@ -136,6 +133,30 @@ class _HomeScreenState extends State<HomeScreen> {
         if (banks.isNotEmpty) {
           currentProv.selectBank(banks.first.id);
         }
+      }
+
+      // 导入成功提示 + LLM 分析快捷入口
+      final settings = context.read<SettingsProvider>();
+      final hasLLM = settings.hasLLM;
+      final autoAnalyze = settings.autoLlmAnalyze;
+      final banks = context.read<BankProvider>().banks;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('导入成功：${result.questions.length} 道题'),
+          action: (hasLLM && banks.isNotEmpty && !autoAnalyze)
+              ? SnackBarAction(
+                  label: 'LLM 分析',
+                  onPressed: () {
+                    _startLlmAnalysis(banks.first.id, banks.first.name);
+                  },
+                )
+              : null,
+        ),
+      );
+
+      // 自动 LLM 分析（如果设置开启且 LLM 已配置）
+      if (autoAnalyze && hasLLM && banks.isNotEmpty) {
+        _startLlmAnalysis(banks.first.id, banks.first.name);
       }
 
       // 刷新统计
@@ -177,6 +198,80 @@ class _HomeScreenState extends State<HomeScreen> {
           currentProv.selectBank(banks.first.id);
         }
       }
+      await _loadStats();
+    }
+  }
+
+  Future<void> _startLlmAnalysis(String bankId, String bankName) async {
+    final settings = context.read<SettingsProvider>();
+    if (!settings.hasLLM) {
+      final go = await showDialog<bool>(
+        context: context,
+        useRootNavigator: true,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('LLM 未配置'),
+          content: const Text('请先在 AI 配置中设置 Base URL、API Key 和 Model Name。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('去配置'),
+            ),
+          ],
+        ),
+      );
+      if (go == true && mounted) context.go('/settings');
+      return;
+    }
+
+    // 确认 dialog
+    final questions = await _dao.getBankQuestions(bankId);
+    if (!mounted) return;
+    final proceed = await showDialog<bool>(
+      context: context,
+      useRootNavigator: true,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('LLM 分析'),
+        content: Text('将对"$bankName"中的 ${questions.length} 道题进行 AI 分析。\n\n'
+            'LLM 将根据你在 AI 配置中设定的 Prompt 筛选题目。\n'
+            '分析完成后，创建测试时可选"LLM精选"模式。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.auto_awesome, size: 18),
+            label: const Text('开始分析'),
+          ),
+        ],
+      ),
+    );
+    if (proceed != true || !mounted) return;
+
+    final client = LlmClient(
+      apiKey: settings.apiKey!,
+      baseUrl: settings.baseUrl!,
+      modelName: settings.modelName ?? 'gpt-4o',
+    );
+
+    await showDialog(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: false,
+      builder: (_) => LlmAnalysisProgressDialog(
+        bankId: bankId,
+        bankName: bankName,
+        client: client,
+        prompt: settings.aiPrompt,
+      ),
+    );
+
+    if (mounted) {
       await _loadStats();
     }
   }
@@ -228,7 +323,8 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 24),
 
             // 错题提醒
-            if (_wrongCount > 0)
+            if (_wrongCount > 0 &&
+                context.watch<SettingsProvider>().showWrongTitle)
               Card(
                 color: theme.colorScheme.errorContainer,
                 child: ListTile(
@@ -282,6 +378,17 @@ class _HomeScreenState extends State<HomeScreen> {
       List<dynamic> banks, String? currentBankId, ThemeData theme) {
     final hasBanks = banks.isNotEmpty;
 
+    // 防御：currentBankId 不在 bank 列表中时，回退到第一个
+    final bankIds = banks.map((b) => b.id as String).toList();
+    final effectiveId = (currentBankId != null && bankIds.contains(currentBankId))
+        ? currentBankId
+        : (hasBanks ? bankIds.first : null);
+    if (effectiveId != currentBankId && effectiveId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        context.read<CurrentBankProvider>().selectBank(effectiveId);
+      });
+    }
+
     return Row(
       children: [
         // 题库切换下拉
@@ -294,7 +401,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: DropdownButton<String>(
-                    value: currentBankId,
+                    value: effectiveId,
                     isExpanded: true,
                     underline: const SizedBox(),
                     items: banks.map<DropdownMenuItem<String>>((bank) {
@@ -353,26 +460,39 @@ class _HomeScreenState extends State<HomeScreen> {
         trailing: PopupMenuButton<String>(
           onSelected: (v) {
             if (v == 'rename') _renameBank(bank.id, bankName);
+            if (v == 'llm_analyze') _startLlmAnalysis(bank.id, bankName);
             if (v == 'delete') _deleteBank(bank.id, bankName);
           },
-          itemBuilder: (_) => [
-            const PopupMenuItem(
-              value: 'rename',
-              child: Row(children: [
-                Icon(Icons.edit, size: 20),
-                SizedBox(width: 8),
-                Text('重命名'),
-              ]),
-            ),
-            const PopupMenuItem(
-              value: 'delete',
-              child: Row(children: [
-                Icon(Icons.delete, size: 20, color: Colors.red),
-                SizedBox(width: 8),
-                Text('删除', style: TextStyle(color: Colors.red)),
-              ]),
-            ),
-          ],
+          itemBuilder: (_) {
+            final settings = context.read<SettingsProvider>();
+            return [
+              const PopupMenuItem(
+                value: 'rename',
+                child: Row(children: [
+                  Icon(Icons.edit, size: 20),
+                  SizedBox(width: 8),
+                  Text('重命名'),
+                ]),
+              ),
+              if (settings.hasLLM)
+                const PopupMenuItem(
+                  value: 'llm_analyze',
+                  child: Row(children: [
+                    Icon(Icons.auto_awesome, size: 20),
+                    SizedBox(width: 8),
+                    Text('LLM 分析'),
+                  ]),
+                ),
+              const PopupMenuItem(
+                value: 'delete',
+                child: Row(children: [
+                  Icon(Icons.delete, size: 20, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text('删除', style: TextStyle(color: Colors.red)),
+                ]),
+              ),
+            ];
+          },
         ),
         onTap: () {
           context.read<CurrentBankProvider>().selectBank(bank.id);

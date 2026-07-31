@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/quiz_provider.dart';
+import '../providers/settings_provider.dart';
+import '../ai/llm_client.dart';
 import '../widgets/quiz_card.dart';
 import '../widgets/progress_bar.dart';
 
@@ -144,6 +146,7 @@ class _PerQuestionViewState extends State<_PerQuestionView> {
                 onSelectionChanged: confirmed
                     ? null
                     : (answer) => setState(() => _pendingAnswer = answer),
+                onAiGrade: confirmed ? (answer) => _gradeWithAi(question, answer) : null,
               ),
             ),
           ),
@@ -215,6 +218,83 @@ class _PerQuestionViewState extends State<_PerQuestionView> {
       },
       child: Text(isLast ? '查看结果 📊' : '下一题 →'),
     );
+  }
+
+  Future<void> _gradeWithAi(question, String userAnswer) async {
+    final settings = context.read<SettingsProvider>();
+    if (!settings.hasLLM) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先在 AI 配置中设置 API')),
+      );
+      return;
+    }
+
+    BuildContext? loadingCtx;
+    showDialog(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        loadingCtx = dialogContext;
+        return const Center(child: CircularProgressIndicator());
+      },
+    );
+
+    try {
+      final client = LlmClient(
+        apiKey: settings.apiKey!,
+        baseUrl: settings.baseUrl!,
+        modelName: settings.modelName ?? 'gpt-4o',
+      );
+      final result = await client.evaluateSubjectiveAnswer(
+        stem: question.stem,
+        referenceAnswer: question.answer,
+        userAnswer: userAnswer,
+      );
+
+      if (loadingCtx != null && Navigator.canPop(loadingCtx!)) {
+        Navigator.pop(loadingCtx!);
+      }
+      if (!mounted) return;
+
+      await showDialog(
+        context: context,
+        useRootNavigator: true,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('AI 评分'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('题目：${question.stem}', maxLines: 3, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 8),
+                Text('你的答案：$userAnswer', style: TextStyle(color: Colors.orange.shade800)),
+                const SizedBox(height: 8),
+                Text('参考答案：${question.answer}', style: TextStyle(color: Colors.green.shade800)),
+                const Divider(),
+                Text(result, style: const TextStyle(fontSize: 14)),
+              ],
+            ),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (loadingCtx != null && Navigator.canPop(loadingCtx!)) {
+        Navigator.pop(loadingCtx!);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('AI 评分失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
   }
 
   void _showExitDialog(BuildContext context) {

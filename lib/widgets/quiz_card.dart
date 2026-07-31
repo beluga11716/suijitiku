@@ -12,6 +12,7 @@ class QuizCard extends StatefulWidget {
   final String? initialAnswer;
   final String? userAnswer; // 外部控制的答案（试卷模式）
   final void Function(String answer)? onSelectionChanged;
+  final void Function(String answer)? onAiGrade; // 主观题 AI 评分回调
 
   const QuizCard({
     super.key,
@@ -20,6 +21,7 @@ class QuizCard extends StatefulWidget {
     this.initialAnswer,
     this.userAnswer,
     this.onSelectionChanged,
+    this.onAiGrade,
   });
 
   @override
@@ -173,21 +175,18 @@ class _QuizCardState extends State<QuizCard> {
             final isSelected = _selectedSingle == label;
             final isCorrectAnswer = q.answer.toUpperCase() == label;
 
-            Color? bgColor;
-            if (widget.showAnswer && isCorrectAnswer) {
-              bgColor = Colors.green.shade50;
-            } else if (widget.showAnswer &&
-                isSelected &&
-                !isCorrectAnswer) {
-              bgColor = Colors.red.shade50;
-            }
+            // 答案揭示后: 正确→绿色, 用户错选→红色, 其余不变
+            final bool? showCorrect = widget.showAnswer
+                ? (isCorrectAnswer
+                    ? true
+                    : (isSelected ? false : null))
+                : null;
 
             return OptionTile(
               label: label,
               text: entry.value,
-              isSelected: isSelected,
-              isCorrect: widget.showAnswer ? isCorrectAnswer : null,
-              backgroundColor: bgColor,
+              isSelected: widget.showAnswer ? false : isSelected,
+              isCorrect: showCorrect,
               onTap: () => _handleSingleChoice(label),
             );
           })
@@ -200,21 +199,18 @@ class _QuizCardState extends State<QuizCard> {
                 q.answer.toUpperCase().split('').toSet();
             final isCorrectAnswer = correctSet.contains(label);
 
-            Color? bgColor;
-            if (widget.showAnswer && isCorrectAnswer) {
-              bgColor = Colors.green.shade50;
-            } else if (widget.showAnswer &&
-                isSelected &&
-                !isCorrectAnswer) {
-              bgColor = Colors.red.shade50;
-            }
+            // 答案揭示后: 正确→绿色, 用户错选→红色, 其余不变
+            final bool? showCorrect = widget.showAnswer
+                ? (isCorrectAnswer
+                    ? true
+                    : (isSelected ? false : null))
+                : null;
 
             return OptionTile(
               label: label,
               text: entry.value,
-              isSelected: isSelected,
-              isCorrect: widget.showAnswer ? isCorrectAnswer : null,
-              backgroundColor: bgColor,
+              isSelected: widget.showAnswer ? false : isSelected,
+              isCorrect: showCorrect,
               multiSelect: true,
               onTap: () => _handleMultiChoice(label),
             );
@@ -247,6 +243,10 @@ class _QuizCardState extends State<QuizCard> {
             isCorrect: _checkCorrect(q),
             correctAnswer: q.answer,
             explanation: q.explanation,
+            isSubjective: !q.type.isObjective,
+            onAiGrade: (widget.showAnswer && widget.onAiGrade != null)
+                ? () => widget.onAiGrade!(_textController.text.trim())
+                : null,
           ),
         ],
       ],
@@ -277,11 +277,15 @@ class _AnswerBanner extends StatelessWidget {
   final bool isCorrect;
   final String correctAnswer;
   final String? explanation;
+  final bool isSubjective;
+  final VoidCallback? onAiGrade;
 
   const _AnswerBanner({
     required this.isCorrect,
     required this.correctAnswer,
     this.explanation,
+    this.isSubjective = false,
+    this.onAiGrade,
   });
 
   @override
@@ -321,6 +325,21 @@ class _AnswerBanner extends StatelessWidget {
             Text('解析：$explanation',
                 style: TextStyle(
                     color: Colors.grey.shade700, fontSize: 13)),
+          ],
+          // AI 评分按钮：主观题 + 答错 + 有回调
+          if (!isCorrect && isSubjective && onAiGrade != null) ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton.icon(
+                onPressed: onAiGrade,
+                icon: const Icon(Icons.auto_awesome, size: 16),
+                label: const Text('AI 评分'),
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ),
           ],
         ],
       ),
