@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import '../providers/quiz_provider.dart';
-import '../providers/settings_provider.dart';
 import '../providers/current_bank_provider.dart';
+import '../providers/settings_provider.dart';
 import '../models/question.dart';
 import '../database/dao.dart';
+import '../ai/llm_client.dart';
+import '../ai/llm_analysis_service.dart';
+import '../widgets/llm_analysis_progress_dialog.dart';
+import 'ai_settings_screen.dart';
 
 class TestListScreen extends StatefulWidget {
   const TestListScreen({super.key});
@@ -192,7 +196,6 @@ class _TestListScreenState extends State<TestListScreen>
   Future<void> _showCreateDialog() async {
     final currentBankId = context.read<CurrentBankProvider>().currentBankId;
     if (currentBankId == null) return;
-    final hasLLM = context.read<SettingsProvider>().hasLLM;
     final questions = await _dao.getBankQuestions(currentBankId);
     final bank = await _dao.getBank(currentBankId);
     if (!mounted) return;
@@ -204,18 +207,34 @@ class _TestListScreenState extends State<TestListScreen>
       return;
     }
 
+    // 检查 LLM 分析状态
+    final isAnalyzed = bank?.hasLlmAnalysis ?? false;
+    final selectedCount = isAnalyzed
+        ? questions.where((q) => q.featuredScore > 0).length
+        : 0;
+
     final result = await showDialog<Map>(
       context: context,
       useRootNavigator: true,
       builder: (_) => _CreateTestDialog(
+        bankId: currentBankId,
         bankName: bank?.name ?? '',
         totalQuestions: totalQuestions,
         hasSubjective: questions.any((q) => !q.type.isObjective),
-        hasLLM: hasLLM,
+        isLlmAnalyzed: isAnalyzed,
+        llmSelectedCount: selectedCount,
       ),
     );
 
     if (result == null || !mounted) return;
+
+    // 特殊 action：跳转 AI 配置
+    if (result['action'] == 'go_settings') {
+      Navigator.of(context, rootNavigator: true).push(
+        MaterialPageRoute(builder: (_) => const AiSettingsScreen()),
+      );
+      return;
+    }
 
     final types = result['types'] as List<String>?;
     await context.read<QuizProvider>().startSession(
@@ -255,7 +274,7 @@ class _TestListScreenState extends State<TestListScreen>
                   controller: _tabController,
                   children: [
                     _buildTab(_inProgress, theme),
-                    _buildTab(_completed, theme),
+                    _buildTab(_completed, theme, isCompletedTab: true),
                   ],
                 ),
     );
@@ -333,9 +352,10 @@ class _TestListScreenState extends State<TestListScreen>
     );
   }
 
-  Widget _buildTab(List<dynamic> sessions, ThemeData theme) {
+  Widget _buildTab(List<dynamic> sessions, ThemeData theme,
+      {bool isCompletedTab = false}) {
     if (sessions.isEmpty) {
-      return _buildEmpty(theme);
+      return _buildEmpty(theme, isCompleted: isCompletedTab);
     }
 
     return RefreshIndicator(
@@ -348,21 +368,28 @@ class _TestListScreenState extends State<TestListScreen>
     );
   }
 
-  Widget _buildEmpty(ThemeData theme) {
+  Widget _buildEmpty(ThemeData theme, {bool isCompleted = false}) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.assignment_outlined,
-              size: 64, color: theme.colorScheme.outline),
+          Icon(
+            isCompleted ? Icons.hourglass_empty : Icons.assignment_outlined,
+            size: 64,
+            color: theme.colorScheme.outline,
+          ),
           const SizedBox(height: 16),
-          Text('还没有测试',
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(color: theme.colorScheme.outline)),
+          Text(
+            isCompleted ? '还没有已完成的测试' : '还没有测试',
+            style: theme.textTheme.titleMedium
+                ?.copyWith(color: theme.colorScheme.outline),
+          ),
           const SizedBox(height: 8),
-          Text('点击右上角 + 创建新测试',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.outline)),
+          Text(
+            isCompleted ? '快去刷题吧' : '点击右上角 + 创建新测试',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.outline),
+          ),
         ],
       ),
     );
@@ -400,7 +427,7 @@ class _TestListScreenState extends State<TestListScreen>
               ),
         title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(
-          '$progress · $dateStr · ${session.mode == 'featured' ? 'AI精选' : '随机'} · ${session.quizStyle == 'exam' ? '试卷' : '逐题'}',
+          '$progress · $dateStr · ${session.mode == 'featured' ? 'LLM精选' : '随机'} · ${session.quizStyle == 'exam' ? '试卷' : '逐题'}',
         ),
         trailing: _selecting
             ? null
@@ -528,16 +555,20 @@ class _RenameTestDialogState extends State<_RenameTestDialog> {
 // ==================== 创建测试 Dialog ====================
 
 class _CreateTestDialog extends StatefulWidget {
+  final String bankId;
   final String bankName;
   final int totalQuestions;
   final bool hasSubjective;
-  final bool hasLLM;
+  final bool isLlmAnalyzed;
+  final int llmSelectedCount;
 
   const _CreateTestDialog({
+    required this.bankId,
     required this.bankName,
     required this.totalQuestions,
     required this.hasSubjective,
-    required this.hasLLM,
+    this.isLlmAnalyzed = false,
+    this.llmSelectedCount = 0,
   });
 
   @override
@@ -545,11 +576,16 @@ class _CreateTestDialog extends StatefulWidget {
 }
 
 class _CreateTestDialogState extends State<_CreateTestDialog> {
+  final _dao = Dao();
   late final TextEditingController _nameCtrl;
   String _mode = 'basic';
   String _quizStyle = 'per_question';
   late int _selectedCount;
   Set<QuestionType> _selectedTypes = QuestionType.values.toSet();
+
+  // 本地分析状态（初始从 widget 读取，分析完成后更新）
+  late bool _localIsAnalyzed;
+  late int _localSelectedCount;
 
   @override
   void initState() {
@@ -559,6 +595,8 @@ class _CreateTestDialogState extends State<_CreateTestDialog> {
     _nameCtrl.text =
         '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${widget.bankName}';
     _selectedCount = (widget.totalQuestions / 2).round().clamp(1, widget.totalQuestions);
+    _localIsAnalyzed = widget.isLlmAnalyzed;
+    _localSelectedCount = widget.llmSelectedCount;
   }
 
   @override
@@ -567,10 +605,169 @@ class _CreateTestDialogState extends State<_CreateTestDialog> {
     super.dispose();
   }
 
-  bool get _blocked => widget.hasSubjective && !widget.hasLLM;
+  /// 当前模式下的最大可选题目数
+  int get _effectiveMax {
+    final canUseLlm = context.read<SettingsProvider>().hasLLM &&
+        _localIsAnalyzed &&
+        _localSelectedCount > 0;
+    return (_mode == 'featured' && canUseLlm)
+        ? _localSelectedCount
+        : widget.totalQuestions;
+  }
+
+  void _onModeChanged(String mode) {
+    setState(() {
+      _mode = mode;
+      if (_selectedCount > _effectiveMax) {
+        _selectedCount = _effectiveMax;
+      }
+    });
+  }
+
+  Future<void> _runLlmAnalysis() async {
+    final settings = context.read<SettingsProvider>();
+    final questions = await _dao.getBankQuestions(widget.bankId);
+    if (!mounted) return;
+
+    // 确认 dialog
+    final proceed = await showDialog<bool>(
+      context: context,
+      useRootNavigator: true,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('LLM 分析'),
+        content: Text('将对"${widget.bankName}"中的 ${questions.length} 道题进行 AI 分析。\n\n'
+            'LLM 将根据你在 AI 配置中设定的 Prompt 筛选题目。\n'
+            '分析完成后，创建测试时可选"LLM精选"模式。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.auto_awesome, size: 18),
+            label: const Text('开始分析'),
+          ),
+        ],
+      ),
+    );
+    if (proceed != true || !mounted) return;
+
+    final client = LlmClient(
+      apiKey: settings.apiKey!,
+      baseUrl: settings.baseUrl!,
+      modelName: settings.modelName ?? 'gpt-4o',
+    );
+
+    await showDialog(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: false,
+      builder: (_) => LlmAnalysisProgressDialog(
+        bankId: widget.bankId,
+        bankName: widget.bankName,
+        client: client,
+        prompt: settings.aiPrompt,
+      ),
+    );
+
+    if (!mounted) return;
+
+    // 重新加载分析结果
+    final bank = await _dao.getBank(widget.bankId);
+    final updatedQuestions = await _dao.getBankQuestions(widget.bankId);
+    var newSelectedCount = bank?.hasLlmAnalysis == true
+        ? updatedQuestions.where((q) => q.featuredScore > 0).length
+        : 0;
+    // 上限 120 道
+    if (newSelectedCount > LlmAnalysisService.maxFeaturedQuestions) {
+      newSelectedCount = LlmAnalysisService.maxFeaturedQuestions;
+    }
+
+    if (mounted) {
+      setState(() {
+        _localIsAnalyzed = bank?.hasLlmAnalysis ?? false;
+        _localSelectedCount = newSelectedCount;
+        if (_localSelectedCount > 0) {
+          _mode = 'featured';
+          if (_selectedCount > _localSelectedCount) {
+            _selectedCount = _localSelectedCount;
+          }
+        }
+      });
+    }
+  }
+
+  void _onLockedLlmTap() async {
+    final settings = context.read<SettingsProvider>();
+    if (!settings.hasLLM) {
+      final go = await showDialog<bool>(
+        context: context,
+        useRootNavigator: true,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('LLM 未配置'),
+          content: const Text('请先在 AI 配置中设置 Base URL、API Key 和 Model Name。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('去配置'),
+            ),
+          ],
+        ),
+      );
+      if (go == true && mounted) {
+        _pop({'action': 'go_settings'});
+      }
+    } else {
+      // LLM 已配置但题库未分析 → 直接在当前 dialog 上拉起 LLM 分析
+      await _runLlmAnalysis();
+    }
+  }
+
+  Widget _buildModeSelector(bool canUseLlm, bool hasLLM) {
+    return Row(
+      children: [
+        Expanded(
+          child: _ModeOption(
+            label: '随机',
+            icon: Icons.shuffle,
+            selected: _mode == 'basic',
+            onTap: () => _onModeChanged('basic'),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _ModeOption(
+            label: 'LLM精选',
+            icon: canUseLlm ? Icons.auto_awesome : Icons.lock,
+            selected: _mode == 'featured' && canUseLlm,
+            enabled: canUseLlm,
+            onTap: canUseLlm
+                ? () => _onModeChanged('featured')
+                : _onLockedLlmTap,
+          ),
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final settings = context.read<SettingsProvider>();
+    final hasLLM = settings.hasLLM;
+    final canUseLlm = hasLLM && _localIsAnalyzed && _localSelectedCount > 0;
+
+    // 如果当前选了 LLM精选 但条件不满足，回退到随机（异步，避免 build 中 setState）
+    if (!canUseLlm && _mode == 'featured') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _mode = 'basic');
+      });
+    }
+
     return AlertDialog(
       title: const Text('创建测试'),
       content: SizedBox(
@@ -593,21 +790,16 @@ class _CreateTestDialogState extends State<_CreateTestDialog> {
                 ),
               ),
               const SizedBox(height: 16),
-              // 抽题模式
+              // 抽题模式（始终显示）
               const Text('抽题模式'),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'basic', label: Text('随机'), icon: Icon(Icons.shuffle)),
-                  ButtonSegment(value: 'featured', label: Text('AI精选'), icon: Icon(Icons.auto_awesome)),
-                ],
-                selected: {_mode},
-                onSelectionChanged: (v) => setState(() => _mode = v.first),
-              ),
-              if (_mode == 'featured')
+              const SizedBox(height: 8),
+              _buildModeSelector(canUseLlm, hasLLM),
+              if (_mode == 'featured' && canUseLlm)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
-                  child: Text('按难度/重要性/理论性综合排序，优先抽高分题',
-                      style: Theme.of(context).textTheme.bodySmall),
+                  child: Text('LLM 已筛选出 $_localSelectedCount 道精选题目，按匹配度排序',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.primary)),
                 ),
               const SizedBox(height: 12),
               // 答题方式
@@ -626,8 +818,8 @@ class _CreateTestDialogState extends State<_CreateTestDialog> {
               Slider(
                 value: _selectedCount.toDouble(),
                 min: 1,
-                max: widget.totalQuestions.toDouble(),
-                divisions: widget.totalQuestions > 1 ? widget.totalQuestions - 1 : null,
+                max: _effectiveMax.toDouble(),
+                divisions: _effectiveMax > 1 ? _effectiveMax - 1 : null,
                 label: '$_selectedCount',
                 onChanged: (v) => setState(() => _selectedCount = v.round()),
               ),
@@ -654,22 +846,6 @@ class _CreateTestDialogState extends State<_CreateTestDialog> {
                   );
                 }).toList(),
               ),
-              // 主观题提示
-              if (_blocked)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Card(
-                    color: Theme.of(context).colorScheme.tertiaryContainer,
-                    child: const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: Row(children: [
-                        Icon(Icons.info_outline),
-                        SizedBox(width: 8),
-                        Expanded(child: Text('含主观题，需先在设置中配置 LLM API')),
-                      ]),
-                    ),
-                  ),
-                ),
             ],
           ),
         ),
@@ -680,17 +856,15 @@ class _CreateTestDialogState extends State<_CreateTestDialog> {
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: _blocked
-              ? null
-              : () => _pop({
-                  'name': _nameCtrl.text.trim(),
-                  'mode': _mode,
-                  'style': _quizStyle,
-                  'count': _selectedCount,
-                  'types': _selectedTypes.length == QuestionType.values.length
-                      ? null
-                      : _selectedTypes.map((t) => t.dbValue).toList(),
-                }),
+          onPressed: () => _pop({
+              'name': _nameCtrl.text.trim(),
+              'mode': _mode,
+              'style': _quizStyle,
+              'count': _selectedCount,
+              'types': _selectedTypes.length == QuestionType.values.length
+                  ? null
+                  : _selectedTypes.map((t) => t.dbValue).toList(),
+            }),
           child: const Text('开始'),
         ),
       ],
@@ -700,5 +874,78 @@ class _CreateTestDialogState extends State<_CreateTestDialog> {
   void _pop([dynamic value]) {
     WidgetsBinding.instance
         .addPostFrameCallback((_) => Navigator.pop(context, value));
+  }
+}
+
+// ==================== 模式选择按钮 ====================
+
+class _ModeOption extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _ModeOption({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    this.enabled = true,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.5,
+      child: Material(
+        color: selected && enabled
+            ? theme.colorScheme.secondaryContainer
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: selected && enabled
+                    ? theme.colorScheme.outline
+                    : theme.colorScheme.outlineVariant,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon,
+                    size: 18,
+                    color: selected && enabled
+                        ? theme.colorScheme.onSecondaryContainer
+                        : theme.colorScheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    label,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: selected && enabled ? FontWeight.w600 : FontWeight.normal,
+                      color: selected && enabled
+                          ? theme.colorScheme.onSecondaryContainer
+                          : theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

@@ -398,28 +398,38 @@ class _WrongBookScreenState extends State<WrongBookScreen>
               controller: _tabController,
               children: [
                 _buildWrongSessionTab(_inProgress, theme),
-                _buildWrongSessionTab(_completed, theme),
+                _buildWrongSessionTab(_completed, theme, isCompletedTab: true),
               ],
             ),
     );
   }
 
-  Widget _buildWrongSessionTab(List<dynamic> sessions, ThemeData theme) {
+  Widget _buildWrongSessionTab(List<dynamic> sessions, ThemeData theme,
+      {bool isCompletedTab = false}) {
     if (sessions.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.assignment_outlined,
-                size: 64, color: theme.colorScheme.outline),
+            Icon(
+              isCompletedTab
+                  ? Icons.hourglass_empty
+                  : Icons.assignment_outlined,
+              size: 64,
+              color: theme.colorScheme.outline,
+            ),
             const SizedBox(height: 16),
-            Text('还没有错题测试',
-                style: theme.textTheme.titleMedium
-                    ?.copyWith(color: theme.colorScheme.outline)),
+            Text(
+              isCompletedTab ? '还没有已完成的错题测试' : '还没有错题测试',
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(color: theme.colorScheme.outline),
+            ),
             const SizedBox(height: 8),
-            Text('点击右上角 + 创建错题测试',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: theme.colorScheme.outline)),
+            Text(
+              isCompletedTab ? '快去刷错题吧' : '点击右上角 + 创建错题测试',
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.outline),
+            ),
           ],
         ),
       );

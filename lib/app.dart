@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import 'providers/settings_provider.dart';
 import 'screens/home_screen.dart';
 import 'screens/test_list_screen.dart';
 import 'screens/quiz_screen.dart';
@@ -7,69 +9,90 @@ import 'screens/result_screen.dart';
 import 'screens/wrong_book_screen.dart';
 import 'screens/settings_screen.dart';
 
-class RandomSelectorApp extends StatelessWidget {
-  const RandomSelectorApp({super.key});
+class RandomSelectorApp extends StatefulWidget {
+  final String initialLocation;
+
+  const RandomSelectorApp({super.key, this.initialLocation = '/'});
+
+  @override
+  State<RandomSelectorApp> createState() => _RandomSelectorAppState();
+}
+
+class _RandomSelectorAppState extends State<RandomSelectorApp> {
+  late final GoRouter _router;
+
+  @override
+  void initState() {
+    super.initState();
+    _router = GoRouter(
+      initialLocation: widget.initialLocation,
+      routes: [
+        ShellRoute(
+          builder: (context, state, child) => AppScaffold(child: child),
+          routes: [
+            GoRoute(
+              path: '/',
+              builder: (context, state) => const HomeScreen(),
+            ),
+            GoRoute(
+              path: '/tests',
+              builder: (context, state) => const TestListScreen(),
+            ),
+            GoRoute(
+              path: '/quiz/:sessionId',
+              builder: (context, state) => QuizScreen(
+                sessionId: state.pathParameters['sessionId']!,
+                returnTo: state.uri.queryParameters['returnTo'],
+              ),
+            ),
+            GoRoute(
+              path: '/result/:sessionId',
+              builder: (context, state) => ResultScreen(
+                sessionId: state.pathParameters['sessionId']!,
+              ),
+            ),
+            GoRoute(
+              path: '/wrongbook',
+              builder: (context, state) => const WrongBookScreen(),
+            ),
+            GoRoute(
+              path: '/settings',
+              builder: (context, state) => const SettingsScreen(),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final settings = context.watch<SettingsProvider>();
+    final seedColor = settings.themeColor;
+    final themeMode = settings.themeType.toThemeMode;
+
     return MaterialApp.router(
       title: '题库抽题器',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF4A90D9),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: seedColor,
+          brightness: Brightness.light,
+        ),
         useMaterial3: true,
-        brightness: Brightness.light,
       ),
       darkTheme: ThemeData(
-        colorSchemeSeed: const Color(0xFF4A90D9),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: seedColor,
+          brightness: Brightness.dark,
+        ),
         useMaterial3: true,
-        brightness: Brightness.dark,
       ),
-      themeMode: ThemeMode.system,
+      themeMode: themeMode,
       routerConfig: _router,
     );
   }
 }
-
-final _router = GoRouter(
-  initialLocation: '/',
-  routes: [
-    ShellRoute(
-      builder: (context, state, child) => AppScaffold(child: child),
-      routes: [
-        GoRoute(
-          path: '/',
-          builder: (context, state) => const HomeScreen(),
-        ),
-        GoRoute(
-          path: '/tests',
-          builder: (context, state) => const TestListScreen(),
-        ),
-        GoRoute(
-          path: '/quiz/:sessionId',
-          builder: (context, state) => QuizScreen(
-            sessionId: state.pathParameters['sessionId']!,
-            returnTo: state.uri.queryParameters['returnTo'],
-          ),
-        ),
-        GoRoute(
-          path: '/result/:sessionId',
-          builder: (context, state) => ResultScreen(
-            sessionId: state.pathParameters['sessionId']!,
-          ),
-        ),
-        GoRoute(
-          path: '/wrongbook',
-          builder: (context, state) => const WrongBookScreen(),
-        ),
-        GoRoute(
-          path: '/settings',
-          builder: (context, state) => const SettingsScreen(),
-        ),
-      ],
-    ),
-  ],
-);
 
 class AppScaffold extends StatelessWidget {
   final Widget child;

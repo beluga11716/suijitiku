@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'app.dart';
 import 'database/database_helper.dart';
+import 'database/dao.dart';
 import 'providers/bank_provider.dart';
 import 'providers/quiz_provider.dart';
 import 'providers/wrong_book_provider.dart';
@@ -22,6 +23,15 @@ void main() async {
   // 确保数据库初始化
   await DatabaseHelper.instance.database;
 
+  // 读取启动 tab 设置
+  final dao = Dao();
+  final startTab = await dao.getSetting('start_tab') ?? 'home';
+  final initialLocation = startTab == 'tests'
+      ? '/tests'
+      : startTab == 'wrongbook'
+          ? '/wrongbook'
+          : '/';
+
   runApp(
     MultiProvider(
       providers: [
@@ -31,7 +41,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => SettingsProvider()),
         ChangeNotifierProvider(create: (_) => CurrentBankProvider()),
       ],
-      child: const RandomSelectorApp(),
+      child: RandomSelectorApp(initialLocation: initialLocation),
     ),
   );
 }

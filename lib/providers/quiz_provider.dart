@@ -4,6 +4,7 @@ import '../database/dao.dart';
 import '../models/question.dart';
 import '../models/quiz_session.dart';
 import '../models/quiz_answer.dart';
+import '../ai/llm_analysis_service.dart';
 import 'package:uuid/uuid.dart';
 
 class QuizProvider extends ChangeNotifier {
@@ -73,7 +74,12 @@ class QuizProvider extends ChangeNotifier {
 
       // 按模式抽取题目
       if (mode == 'featured') {
+        // LLM 分析模式：只取 LLM 选中的题目（featuredScore > 0），按分降序，最多 120 道
+        allQuestions = allQuestions.where((q) => q.featuredScore > 0).toList();
         allQuestions.sort((a, b) => b.featuredScore.compareTo(a.featuredScore));
+        if (allQuestions.length > LlmAnalysisService.maxFeaturedQuestions) {
+          allQuestions = allQuestions.take(LlmAnalysisService.maxFeaturedQuestions).toList();
+        }
       } else {
         allQuestions.shuffle(Random());
       }
@@ -422,8 +428,12 @@ class QuizProvider extends ChangeNotifier {
       } else {
         // 没有 questionIds（旧数据），按原逻辑
         if (session.mode == 'featured') {
+          allQuestions = allQuestions.where((q) => q.featuredScore > 0).toList();
           allQuestions
               .sort((a, b) => b.featuredScore.compareTo(a.featuredScore));
+          if (allQuestions.length > LlmAnalysisService.maxFeaturedQuestions) {
+            allQuestions = allQuestions.take(LlmAnalysisService.maxFeaturedQuestions).toList();
+          }
         } else {
           allQuestions.shuffle(Random());
         }

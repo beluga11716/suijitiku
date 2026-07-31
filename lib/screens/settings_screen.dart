@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models/theme/theme_type.dart';
+import '../models/theme/theme_color_type.dart';
 import '../providers/settings_provider.dart';
 import '../providers/bank_provider.dart';
 import '../providers/wrong_book_provider.dart';
 import '../database/dao.dart';
+import 'ai_settings_screen.dart';
+import 'theme_settings_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -13,82 +17,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  final _apiKeyController = TextEditingController();
-  final _baseUrlController = TextEditingController();
-  final _modelController = TextEditingController();
   final _dao = Dao();
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadSettings());
-  }
-
-  Future<void> _loadSettings() async {
-    final settings = context.read<SettingsProvider>();
-    await settings.loadSettings();
-
-    _apiKeyController.text = settings.apiKey ?? '';
-    _baseUrlController.text = settings.baseUrl ?? '';
-    _modelController.text = settings.modelName ?? '';
-  }
-
-  @override
-  void dispose() {
-    _apiKeyController.dispose();
-    _baseUrlController.dispose();
-    _modelController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _saveApiKey() async {
-    await context
-        .read<SettingsProvider>()
-        .setApiKey(_apiKeyController.text.trim());
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('API Key 已保存')));
-    }
-  }
-
-  Future<void> _saveBaseUrl() async {
-    await context
-        .read<SettingsProvider>()
-        .setBaseUrl(_baseUrlController.text.trim());
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Base URL 已保存')));
-    }
-  }
-
-  Future<void> _saveModel() async {
-    await context
-        .read<SettingsProvider>()
-        .setModelName(_modelController.text.trim());
-    if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('Model 已保存')));
-    }
-  }
-
-  Future<void> _setPreset(String type) async {
-    final settings = context.read<SettingsProvider>();
-    if (type == 'openai') {
-      _baseUrlController.text = 'https://api.openai.com';
-      _modelController.text = 'gpt-4o';
-      await settings.setBaseUrl('https://api.openai.com');
-      await settings.setModelName('gpt-4o');
-    } else if (type == 'claude') {
-      _baseUrlController.text = 'https://api.anthropic.com';
-      _modelController.text = 'claude-sonnet-5';
-      await settings.setBaseUrl('https://api.anthropic.com');
-      await settings.setModelName('claude-sonnet-5');
-    }
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已填入 $type 默认配置')));
-    }
-  }
 
   Future<void> _clearRecords() async {
     final wrongBookProv = context.read<WrongBookProvider>();
@@ -149,9 +78,108 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  void _openAiSettings() {
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(builder: (_) => const AiSettingsScreen()),
+    );
+  }
+
+  void _openThemeColorSettings() {
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(builder: (_) => const ThemeSettingsScreen()),
+    );
+  }
+
+  void _openGeneralSettings() {
+    _showGeneralSettingsDialog();
+  }
+
+  Future<void> _showThemeModeDialog() async {
+    final settings = context.read<SettingsProvider>();
+    ThemeType? selected = settings.themeType;
+    await showDialog(
+      context: context,
+      useRootNavigator: true,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('主题模式'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: ThemeType.values
+                .map((t) => ListTile(
+                      title: Text(t.label),
+                      trailing: selected == t
+                          ? const Icon(Icons.check, color: Colors.blue)
+                          : null,
+                      onTap: () {
+                        setDialogState(() => selected = t);
+                        settings.setThemeModeIndex(t.index);
+                        Navigator.pop(dialogContext);
+                      },
+                    ))
+                .toList(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showGeneralSettingsDialog() async {
+    await showDialog(
+      context: context,
+      useRootNavigator: true,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('通用设置'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 启动 Tab
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('启动时进入'),
+                subtitle: const Text('选择打开软件时默认显示的页面'),
+                trailing: DropdownButton<String>(
+                  value: context.watch<SettingsProvider>().startTab,
+                  underline: const SizedBox(),
+                  items: const [
+                    DropdownMenuItem(value: 'home', child: Text('首页')),
+                    DropdownMenuItem(value: 'tests', child: Text('刷题')),
+                    DropdownMenuItem(value: 'wrongbook', child: Text('错题本')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) {
+                      context.read<SettingsProvider>().setStartTab(v);
+                    }
+                  },
+                ),
+              ),
+              const Divider(),
+              // 错题提醒开关
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('首页显示错题提醒'),
+                subtitle: const Text('在首页顶部显示当前题库的错题数量卡片'),
+                value: context.watch<SettingsProvider>().showWrongTitle,
+                onChanged: (v) {
+                  context.read<SettingsProvider>().setShowWrongTitle(v);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final settings = context.watch<SettingsProvider>();
 
     return Scaffold(
@@ -159,88 +187,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // LLM API 配置
-          Text('AI 配置（可选）',
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 4),
-          Text('配置 LLM API 以启用 AI 精选分析和主观题判分',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-          const SizedBox(height: 12),
-
-          // 预设按钮
-          Row(
-            children: [
-              OutlinedButton(
-                onPressed: () => _setPreset('openai'),
-                child: const Text('OpenAI 默认'),
-              ),
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: () => _setPreset('claude'),
-                child: const Text('Claude 默认'),
-              ),
-            ],
+          // ==================== 通用设置 ====================
+          ListTile(
+            leading: const Icon(Icons.tune),
+            title: const Text('通用设置'),
+            subtitle: Text('启动 Tab · ${settings.startTab == 'home' ? '首页' : settings.startTab == 'tests' ? '刷题' : '错题本'}，错题提醒${settings.showWrongTitle ? '开' : '关'}'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _openGeneralSettings,
           ),
-          const SizedBox(height: 12),
 
-          // Base URL
-          TextField(
-            controller: _baseUrlController,
-            decoration: InputDecoration(
-              labelText: 'Base URL',
-              hintText: 'https://api.openai.com',
-              border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                  icon: const Icon(Icons.save), onPressed: _saveBaseUrl),
-            ),
+          const Divider(),
+
+          // ==================== 主题设置 ====================
+          ListTile(
+            leading: const Icon(Icons.brightness_6_outlined),
+            title: const Text('主题模式'),
+            subtitle: Text(settings.themeType.label),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _showThemeModeDialog,
           ),
-          const SizedBox(height: 12),
-
-          // API Key
-          TextField(
-            controller: _apiKeyController,
-            decoration: InputDecoration(
-              labelText: 'API Key',
-              hintText: 'sk-...',
-              border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                  icon: const Icon(Icons.save), onPressed: _saveApiKey),
-            ),
-            obscureText: true,
+          ListTile(
+            leading: const Icon(Icons.palette_outlined),
+            title: const Text('主题颜色'),
+            subtitle: Text(themeColorPresets[settings.themeColorIndex].label),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _openThemeColorSettings,
           ),
-          const SizedBox(height: 12),
 
-          // Model
-          TextField(
-            controller: _modelController,
-            decoration: InputDecoration(
-              labelText: 'Model Name',
-              hintText: 'gpt-4o',
-              border: const OutlineInputBorder(),
-              suffixIcon: IconButton(
-                  icon: const Icon(Icons.save), onPressed: _saveModel),
-            ),
+          const Divider(),
+
+          // ==================== AI 配置 ====================
+          ListTile(
+            leading: const Icon(Icons.auto_awesome),
+            title: const Text('AI 配置'),
+            subtitle: Text(settings.hasLLM ? '✅ 已配置' : '未配置'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _openAiSettings,
           ),
-          if (settings.hasLLM)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Chip(
-                avatar: Icon(Icons.check_circle, size: 18),
-                label: Text('LLM 已配置'),
-                color: WidgetStatePropertyAll(Colors.green),
-              ),
-            ),
 
-          const SizedBox(height: 32),
+          const Divider(),
 
-          // 数据管理
-          Text('数据管理',
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 12),
-
+          // ==================== 数据管理 ====================
           ListTile(
             leading: const Icon(Icons.history),
             title: const Text('清空刷题记录'),
@@ -257,14 +244,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: _clearBanks,
           ),
 
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
 
-          // 关于
-          Text('关于',
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
+          // ==================== 关于 ====================
           const ListTile(
+            leading: Icon(Icons.info_outline),
             title: Text('题库抽题器'),
             subtitle: Text('版本 1.0.0 · GPL-3.0'),
           ),

@@ -18,7 +18,7 @@ class DatabaseHelper {
     final path = join(dbPath, 'randomselector.db');
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -35,6 +35,7 @@ class DatabaseHelper {
         source_file   TEXT,
         source_type   TEXT,
         question_count INTEGER DEFAULT 0,
+        llm_analyzed_at TEXT,
         created_at    TEXT NOT NULL
       )
     ''');
@@ -134,6 +135,10 @@ class DatabaseHelper {
       try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN source TEXT DEFAULT 'bank'"); } catch (_) {}
       try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN question_types TEXT"); } catch (_) {}
       try { await db.execute("ALTER TABLE quiz_sessions ADD COLUMN question_ids TEXT"); } catch (_) {}
+    }
+    if (oldVersion < 4) {
+      // v3 → v4: LLM 分析状态追踪
+      try { await db.execute("ALTER TABLE question_banks ADD COLUMN llm_analyzed_at TEXT"); } catch (_) {}
     }
   }
 
