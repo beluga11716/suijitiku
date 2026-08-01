@@ -18,7 +18,7 @@ enum QuestionType {
       case QuestionType.fillBlank:
         return '填空题';
       case QuestionType.shortAnswer:
-        return '简答题';
+        return '主观题';
     }
   }
 

@@ -15,7 +15,7 @@ class SettingsProvider extends ChangeNotifier {
   String? _aiPrompt;
   bool _autoLlmAnalyze = false;
   int _themeModeIndex = 2; // 默认跟随系统
-  int _themeColorIndex = 0; // 默认蓝色
+  int _themeColorIndex = 1; // 默认绿色
 
   String? get apiKey => _apiKey;
   String? get baseUrl => _baseUrl;
@@ -56,7 +56,7 @@ class SettingsProvider extends ChangeNotifier {
     final themeMode = await _dao.getSetting('theme_mode');
     _themeModeIndex = int.tryParse(themeMode ?? '') ?? 2; // 默认跟随系统
     final themeColor = await _dao.getSetting('theme_color');
-    _themeColorIndex = int.tryParse(themeColor ?? '') ?? 0; // 默认蓝色
+    _themeColorIndex = int.tryParse(themeColor ?? '') ?? 1; // 默认绿色
     notifyListeners();
   }
 

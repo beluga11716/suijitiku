@@ -23,6 +23,10 @@ void main() async {
   // 确保数据库初始化
   await DatabaseHelper.instance.database;
 
+  // 加载所有持久化设置（主题、AI配置、启动tab等）
+  final settingsProvider = SettingsProvider();
+  await settingsProvider.loadSettings();
+
   // 读取启动 tab 设置
   final dao = Dao();
   final startTab = await dao.getSetting('start_tab') ?? 'home';
@@ -38,7 +42,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => BankProvider()),
         ChangeNotifierProvider(create: (_) => QuizProvider()),
         ChangeNotifierProvider(create: (_) => WrongBookProvider()),
-        ChangeNotifierProvider(create: (_) => SettingsProvider()),
+        ChangeNotifierProvider.value(value: settingsProvider),
         ChangeNotifierProvider(create: (_) => CurrentBankProvider()),
       ],
       child: RandomSelectorApp(initialLocation: initialLocation),

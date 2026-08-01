@@ -216,7 +216,7 @@ class _QuizCardState extends State<QuizCard> {
             );
           })
         else
-          // 填空 / 简答
+          // 填空 / 主观题
           TextField(
             controller: _textController,
             maxLines: q.type == QuestionType.shortAnswer ? 6 : 2,
@@ -225,8 +225,8 @@ class _QuizCardState extends State<QuizCard> {
                   ? '请输入答案'
                   : '请输入你的回答...',
               border: const OutlineInputBorder(),
-              filled: widget.showAnswer,
-              fillColor: widget.showAnswer
+              filled: widget.showAnswer && q.type.isObjective,
+              fillColor: widget.showAnswer && q.type.isObjective
                   ? (q.answer == _textController.text
                       ? Colors.green.shade50
                       : Colors.red.shade50)
@@ -242,6 +242,9 @@ class _QuizCardState extends State<QuizCard> {
           _AnswerBanner(
             isCorrect: _checkCorrect(q),
             correctAnswer: q.answer,
+            userAnswer: q.type.isObjective
+                ? null
+                : _textController.text.trim(),
             explanation: q.explanation,
             isSubjective: !q.type.isObjective,
             onAiGrade: (widget.showAnswer && widget.onAiGrade != null)
@@ -276,6 +279,7 @@ class _QuizCardState extends State<QuizCard> {
 class _AnswerBanner extends StatelessWidget {
   final bool isCorrect;
   final String correctAnswer;
+  final String? userAnswer;
   final String? explanation;
   final bool isSubjective;
   final VoidCallback? onAiGrade;
@@ -283,6 +287,7 @@ class _AnswerBanner extends StatelessWidget {
   const _AnswerBanner({
     required this.isCorrect,
     required this.correctAnswer,
+    this.userAnswer,
     this.explanation,
     this.isSubjective = false,
     this.onAiGrade,
@@ -290,56 +295,98 @@ class _AnswerBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: isCorrect ? Colors.green.shade50 : Colors.red.shade50,
+        color: isSubjective
+            ? theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
+            : (isCorrect ? Colors.green.shade50 : Colors.red.shade50),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(
-                isCorrect ? Icons.check_circle : Icons.cancel,
-                color: isCorrect ? Colors.green : Colors.red,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                isCorrect ? '回答正确！' : '回答错误',
+          // 主观题：显示用户答案 vs 参考答案
+          if (isSubjective && userAnswer != null) ...[
+            Text('你的回答：',
                 style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: isCorrect ? Colors.green.shade800 : Colors.red.shade800,
+                    fontWeight: FontWeight.bold,
+                    color: theme.colorScheme.onSurface)),
+            const SizedBox(height: 4),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(userAnswer!,
+                  style: TextStyle(color: theme.colorScheme.onSurface)),
+            ),
+            const SizedBox(height: 12),
+            Text('参考答案：',
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green.shade800)),
+            const SizedBox(height: 4),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(correctAnswer,
+                  style: TextStyle(color: Colors.green.shade900)),
+            ),
+            // AI 评分按钮
+            if (onAiGrade != null) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: OutlinedButton.icon(
+                  onPressed: onAiGrade,
+                  icon: const Icon(Icons.auto_awesome, size: 16),
+                  label: const Text('AI 评分'),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                 ),
               ),
             ],
-          ),
-          if (!isCorrect) ...[
-            const SizedBox(height: 4),
-            Text('正确答案：$correctAnswer',
-                style: TextStyle(color: Colors.green.shade800)),
+          ] else ...[
+            // 客观题：显示对错
+            Row(
+              children: [
+                Icon(
+                  isCorrect ? Icons.check_circle : Icons.cancel,
+                  color: isCorrect ? Colors.green : Colors.red,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  isCorrect ? '回答正确！' : '回答错误',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: isCorrect
+                        ? Colors.green.shade800
+                        : Colors.red.shade800,
+                  ),
+                ),
+              ],
+            ),
+            if (!isCorrect) ...[
+              const SizedBox(height: 4),
+              Text('正确答案：$correctAnswer',
+                  style: TextStyle(color: Colors.green.shade800)),
+            ],
           ],
           if (explanation != null && explanation!.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text('解析：$explanation',
                 style: TextStyle(
                     color: Colors.grey.shade700, fontSize: 13)),
-          ],
-          // AI 评分按钮：主观题 + 答错 + 有回调
-          if (!isCorrect && isSubjective && onAiGrade != null) ...[
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: OutlinedButton.icon(
-                onPressed: onAiGrade,
-                icon: const Icon(Icons.auto_awesome, size: 16),
-                label: const Text('AI 评分'),
-                style: OutlinedButton.styleFrom(
-                  visualDensity: VisualDensity.compact,
-                ),
-              ),
-            ),
           ],
         ],
       ),
