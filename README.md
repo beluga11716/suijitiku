@@ -1,4 +1,10 @@
-# <img src="assets/icon/icon.png" width="40" alt="题库抽题器图标"> 题库抽题器 (Randomselector)
+<div align="center">
+    <img width="200" height="200" src="assets/icon/icon.png">
+</div>
+
+<div align="center">
+    <h1>题库抽题器 (Randomselector)</h1>
+</div>
 
 跨平台刷题应用，支持 Windows 和 Android。导入 Word/PDF 题库文档，自动解析题目，随机抽题刷题，错题本管理，LLM 精选模式。
 
