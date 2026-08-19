@@ -655,14 +655,29 @@ class _StatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // 数值过长时缩小字号，避免换行撑破卡片（如四位数题目数量）
+    final baseSize = theme.textTheme.headlineSmall?.fontSize ?? 24;
+    final size = value.length >= 7
+        ? baseSize * 0.6
+        : value.length >= 5
+            ? baseSize * 0.75
+            : value.length >= 4
+                ? baseSize * 0.85
+                : baseSize;
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
         child: Column(
           children: [
-            Text(value,
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                value,
+                maxLines: 1,
                 style: theme.textTheme.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.bold)),
+                    ?.copyWith(fontWeight: FontWeight.bold, fontSize: size),
+              ),
+            ),
             const SizedBox(height: 4),
             Text(label,
                 style: theme.textTheme.bodySmall

@@ -29,8 +29,14 @@ class SettingsProvider extends ChangeNotifier {
   /// 首页是否显示错题提醒卡片（默认显示）
   bool get showWrongTitle => _showWrongTitle;
 
-  /// LLM 分析用的 prompt 模板
-  String get aiPrompt => _aiPrompt ?? LlmClient.defaultPrompt;
+  /// LLM 选题标准（用户唯一可编辑的 Prompt 部分，不含模板固定内容）
+  String get aiCriteria {
+    final c = _aiPrompt;
+    return (c == null || c.trim().isEmpty) ? LlmClient.defaultCriteria : c;
+  }
+
+  /// LLM 分析用的完整 prompt（选题标准 + 固定模板包装）
+  String get aiPrompt => LlmClient.buildPrompt(aiCriteria);
 
   /// 导入题库后是否自动调用 LLM 分析（默认关闭）
   bool get autoLlmAnalyze => _autoLlmAnalyze;
@@ -51,6 +57,12 @@ class SettingsProvider extends ChangeNotifier {
     final showWrong = await _dao.getSetting('show_wrong_title');
     _showWrongTitle = showWrong != 'false'; // 默认 true
     _aiPrompt = await _dao.getSetting('ai_prompt');
+    // 迁移：旧版本存的是完整 prompt 模板，现在只保存选题标准部分
+    if (_aiPrompt != null &&
+        (_aiPrompt!.contains('{questions_json}') ||
+            _aiPrompt!.contains('你是一个题库分析助手'))) {
+      _aiPrompt = null;
+    }
     final autoLlm = await _dao.getSetting('auto_llm_analyze');
     _autoLlmAnalyze = autoLlm == 'true'; // 默认 false
     final themeMode = await _dao.getSetting('theme_mode');

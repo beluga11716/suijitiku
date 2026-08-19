@@ -14,13 +14,21 @@ class LlmClient {
     required this.modelName,
   });
 
-  /// 默认 Prompt 模板。占位符 {questions_json} 会被替换为题目 JSON 数组。
-  static const defaultPrompt = '''你是一个题库分析助手。请分析以下题目，判断每道题是否符合"核心重点题"的标准：
+  /// 默认选题标准（用户唯一可编辑的 Prompt 部分）
+  static const defaultCriteria = '''- 涉及核心概念、原理、定义
+- 属于常考、易错、重点知识点
+- 具有较高的学习价值''';
+
+  /// 把用户编写的选题标准包装成完整 Prompt 模板。
+  ///
+  /// 分析指令、返回格式等固定部分由本方法生成，用户不可见也不可编辑。
+  /// 占位符 {questions_json} 会被替换为题目 JSON 数组。
+  static String buildPrompt(String criteria) {
+    final c = criteria.trim();
+    return '''你是一个题库分析助手。请分析以下题目，判断每道题是否符合以下筛选标准：
 
 标准：
-- 涉及核心概念、原理、定义
-- 属于常考、易错、重点知识点
-- 具有较高的学习价值
+${c.isEmpty ? defaultCriteria : c}
 
 请返回 JSON 格式：
 {"selected": [{"id": "题目id", "score": 0.0-1.0, "reason": "一句话理由"}, ...]}
@@ -29,11 +37,13 @@ class LlmClient {
 
 题目列表：
 {questions_json}''';
+  }
 
   /// 批量分析题目，返回更新后的题目列表
   ///
   /// 每批最多发送 20 道题，避免 token 超限。
-  /// [customPrompt] 自定义 prompt，用 {questions_json} 作为题目列表占位符。
+  /// [customPrompt] 完整 prompt 模板（用 [buildPrompt] 生成），
+  /// 用 {questions_json} 作为题目列表占位符。
   /// [onProgress] 每批次完成回调 (completed, total)。
   /// [isCancelled] 返回 true 时中断分析。
   Future<List<Question>> analyzeQuestions(
@@ -113,7 +123,7 @@ class LlmClient {
           'answer': q.answer,
         }).toList();
 
-    final template = customPrompt ?? defaultPrompt;
+    final template = customPrompt ?? buildPrompt(defaultCriteria);
     return template.replaceAll('{questions_json}', jsonEncode(questionsJson));
   }
 

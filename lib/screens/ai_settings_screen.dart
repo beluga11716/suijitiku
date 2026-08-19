@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/settings_provider.dart';
 import '../ai/llm_client.dart';
 
-/// AI 配置独立页面，包含模型配置和 Prompt 模板编辑
+/// AI 配置独立页面，包含模型配置和选题标准编辑
 class AiSettingsScreen extends StatefulWidget {
   const AiSettingsScreen({super.key});
 
@@ -28,7 +28,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
     _apiKeyController.text = settings.apiKey ?? '';
     _baseUrlController.text = settings.baseUrl ?? '';
     _modelController.text = settings.modelName ?? '';
-    _promptController.text = settings.aiPrompt;
+    _promptController.text = settings.aiCriteria;
   }
 
   @override
@@ -156,7 +156,7 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
       useRootNavigator: true,
       builder: (dialogContext) => AlertDialog(
         title: const Text('清空 AI 配置'),
-        content: const Text('将清除 Base URL、API Key、Model Name，并恢复 Prompt 为默认值。确定吗？'),
+        content: const Text('将清除 Base URL、API Key、Model Name，并恢复选题标准为默认值。确定吗？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
@@ -174,13 +174,13 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
       _baseUrlController.clear();
       _apiKeyController.clear();
       _modelController.clear();
-      _promptController.text = LlmClient.defaultPrompt;
+      _promptController.text = LlmClient.defaultCriteria;
       await _saveAll();
     }
   }
 
   void _resetPrompt() {
-    _promptController.text = LlmClient.defaultPrompt;
+    _promptController.text = LlmClient.defaultCriteria;
   }
 
   @override
@@ -204,10 +204,52 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
             ],
           ],
         ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FilledButton.icon(
+              onPressed: _saveAll,
+              icon: const Icon(Icons.save, size: 18),
+              label: const Text('保存配置'),
+              style: FilledButton.styleFrom(
+                backgroundColor: theme.colorScheme.onPrimary,
+                foregroundColor: theme.colorScheme.primary,
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // ⚠️ 保存提示（页面第一行）
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.orange.shade100,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.warning_amber_rounded,
+                    color: Colors.orange.shade900, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '一定要保存才能生效，非常重要！！！',
+                    style: TextStyle(
+                      color: Colors.orange.shade900,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+
           // ==================== 模型配置 ====================
           Text('模型配置',
               style: theme.textTheme.titleMedium
@@ -279,23 +321,12 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 16),
-
-          // 保存按钮
-          Align(
-            alignment: Alignment.centerRight,
-            child: FilledButton.icon(
-              onPressed: _saveAll,
-              icon: const Icon(Icons.save, size: 18),
-              label: const Text('保存配置'),
-            ),
-          ),
           const SizedBox(height: 24),
 
-          // ==================== Prompt 模板 ====================
+          // ==================== 选题标准 ====================
           Row(
             children: [
-              Text('LLM 分析 Prompt',
+              Text('选题标准',
                   style: theme.textTheme.titleMedium
                       ?.copyWith(fontWeight: FontWeight.w600)),
               const Spacer(),
@@ -307,15 +338,16 @@ class _AiSettingsScreenState extends State<AiSettingsScreen> {
             ],
           ),
           const SizedBox(height: 4),
-          Text('自定义 LLM 分析题目的标准。占位符 {questions_json} 会被替换为实际题目数据',
+          Text('只需描述你想筛选什么样的题。分析指令和返回格式由应用自动生成',
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
           const SizedBox(height: 8),
           TextField(
             controller: _promptController,
-            maxLines: 10,
+            maxLines: 8,
             decoration: const InputDecoration(
-              hintText: '输入 Prompt 模板...',
+              labelText: '筛选要求',
+              hintText: '例如：选出这个题库里最简单的基础题',
               border: OutlineInputBorder(),
               alignLabelWithHint: true,
             ),
