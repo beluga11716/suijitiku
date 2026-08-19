@@ -16,8 +16,10 @@
 
 | 平台 | 文件 | 说明 |
 |---|---|---|
-| Windows | `randomselector-v1.0.0-windows.zip` | 解压后运行 `randomselector.exe`，免安装 |
-| Android | `app-release.apk` | 侧载安装 |
+| Windows | `randomselector-v1.0.1-windows.zip` | 解压后运行 `randomselector.exe`，免安装 |
+| Android | `randomselector-v1.0.1-arm64-v8a.apk` | 绝大多数手机（2017 年后的设备） |
+| Android | `randomselector-v1.0.1-armeabi-v7a.apk` | 旧款 32 位设备 |
+| Android | `randomselector-v1.0.1-x86_64.apk` | x86 模拟器 |
 
 ## 功能
 
