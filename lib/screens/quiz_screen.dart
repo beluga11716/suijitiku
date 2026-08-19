@@ -1,6 +1,10 @@
+import 'dart:async';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import '../models/question.dart';
+import '../models/quiz_answer.dart';
 import '../providers/quiz_provider.dart';
 import '../providers/settings_provider.dart';
 import '../ai/llm_client.dart';
@@ -88,7 +92,8 @@ class _QuizScreenState extends State<QuizScreen> {
   }
 }
 
-/// 逐题模式 — 两阶段交互：自由选择 → 点「确认答案」判分 → 「下一题」
+/// 逐题模式 — 滑动翻页（PageView），两阶段交互：
+/// 自由选择 → 点「确认答案」判分 → 答对 0.8s 后自动滑入下一题，答错停留看解析
 class _PerQuestionView extends StatefulWidget {
   final QuizProvider quiz;
   final String? returnTo;
@@ -100,21 +105,28 @@ class _PerQuestionView extends StatefulWidget {
 }
 
 class _PerQuestionViewState extends State<_PerQuestionView> {
-  String? _pendingAnswer;
-  int _lastIndex = -1;
+  late final PageController _pageController;
+  // 各题未确认的选择（页面被 PageView 回收重建后据此恢复）
+  final Map<int, String> _pendingAnswers = {};
+  Timer? _autoAdvanceTimer;
+  bool _finishing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController(initialPage: widget.quiz.currentIndex);
+  }
+
+  @override
+  void dispose() {
+    _autoAdvanceTimer?.cancel();
+    _pageController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final quiz = widget.quiz;
-    final question = quiz.currentQuestion;
-    final existingAnswer = quiz.getAnswerForIndex(quiz.currentIndex);
-    final confirmed = existingAnswer != null;
-
-    // 切题时重置待确认答案
-    if (quiz.currentIndex != _lastIndex) {
-      _lastIndex = quiz.currentIndex;
-      _pendingAnswer = null;
-    }
 
     return Scaffold(
       appBar: AppBar(
@@ -134,44 +146,40 @@ class _PerQuestionViewState extends State<_PerQuestionView> {
             correctCount: quiz.currentSession?.correctCount ?? 0,
           ),
 
-          // 题目
+          // 题目 — 左右滑动切换
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: QuizCard(
-                question: question,
-                showAnswer: confirmed,
-                initialAnswer: existingAnswer?.userAnswer,
-                userAnswer: null,
-                onSelectionChanged: confirmed
-                    ? null
-                    : (answer) => setState(() => _pendingAnswer = answer),
-                onAiGrade: confirmed ? (answer) => _gradeWithAi(question, answer) : null,
+            child: ScrollConfiguration(
+              // Windows 桌面端默认不允许鼠标拖拽滑动，显式放开
+              behavior: ScrollConfiguration.of(context).copyWith(
+                dragDevices: {
+                  PointerDeviceKind.touch,
+                  PointerDeviceKind.mouse,
+                  PointerDeviceKind.trackpad,
+                  PointerDeviceKind.stylus,
+                },
               ),
-            ),
-          ),
-
-          // 底部操作栏 — 大按钮
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  if (quiz.currentIndex > 0)
-                    OutlinedButton(
-                      onPressed: () => quiz.previousQuestion(),
-                      child: const Text('上一题'),
-                    )
-                  else
-                    const Spacer(),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: SizedBox(
-                      height: 52,
-                      child: confirmed ? _nextButton(quiz, context) : _confirmButton(quiz),
-                    ),
-                  ),
-                ],
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: quiz.questions.length,
+                onPageChanged: _onPageChanged,
+                itemBuilder: (context, index) {
+                  final question = quiz.questions[index];
+                  return _QuestionPage(
+                    key: ValueKey(question.id),
+                    quiz: quiz,
+                    question: question,
+                    answered: quiz.getAnswerForIndex(index),
+                    pendingAnswer: _pendingAnswers[index],
+                    isLast: index == quiz.questions.length - 1,
+                    onSelectionChanged: (answer) =>
+                        setState(() => _pendingAnswers[index] = answer),
+                    onConfirmed: (isCorrect) =>
+                        _handleConfirmed(index, isCorrect),
+                    onNext: () => _goNext(index),
+                    onFinish: _finishQuiz,
+                    onAiGrade: (answer) => _gradeWithAi(question, answer),
+                  );
+                },
               ),
             ),
           ),
@@ -180,47 +188,61 @@ class _PerQuestionViewState extends State<_PerQuestionView> {
     );
   }
 
-  /// 「确认答案!」按钮 — 选完答案后点此判分
-  Widget _confirmButton(QuizProvider quiz) {
-    final hasAnswer = _pendingAnswer != null && _pendingAnswer!.isNotEmpty;
-    return FilledButton(
-      style: FilledButton.styleFrom(
-        textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-      onPressed: hasAnswer
-          ? () async {
-              await quiz.submitAnswer(_pendingAnswer!);
-              setState(() {});
-            }
-          : null,
-      child: const Text('确认答案 ✓'),
-    );
+  /// 滑动翻页：取消自动跳题计时，同步当前题号并持久化进度
+  void _onPageChanged(int index) {
+    _autoAdvanceTimer?.cancel();
+    _autoAdvanceTimer = null;
+    widget.quiz.goToQuestion(index);
   }
 
-  /// 「下一题」/「查看结果」按钮 — 判分后出现
-  Widget _nextButton(QuizProvider quiz, BuildContext context) {
-    final isLast = quiz.isLastQuestion;
-    return FilledButton(
-      style: FilledButton.styleFrom(
-        textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-      onPressed: () async {
-        if (isLast) {
-          await quiz.completeSession();
-          if (context.mounted) {
-            context.go('/result/${quiz.currentSession!.id}');
-          }
-        } else {
-          quiz.nextQuestion();
-        }
-      },
-      child: Text(isLast ? '查看结果 📊' : '下一题 →'),
-    );
+  /// 确认答案后：答对 → 展示反馈 0.8s 后自动进入下一题（最后一题直接出结果）；
+  /// 答错 → 停留本页看解析，用户滑动切换
+  void _handleConfirmed(int index, bool isCorrect) {
+    if (!isCorrect) return;
+    _autoAdvanceTimer?.cancel();
+    final isLast = index >= widget.quiz.questions.length - 1;
+    _autoAdvanceTimer = Timer(const Duration(milliseconds: 800), () {
+      _autoAdvanceTimer = null;
+      if (!mounted) return;
+      if (isLast) {
+        _finishQuiz();
+      } else if (_pageController.hasClients &&
+          (_pageController.page?.round() ?? -1) == index) {
+        _pageController.nextPage(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
   }
 
-  Future<void> _gradeWithAi(question, String userAnswer) async {
+  /// 答错停留时点「下一题」：手动进入下一题（最后一题直接出结果）
+  void _goNext(int index) {
+    final isLast = index >= widget.quiz.questions.length - 1;
+    if (isLast) {
+      _finishQuiz();
+    } else if (_pageController.hasClients &&
+        (_pageController.page?.round() ?? -1) == index) {
+      _pageController.nextPage(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+      );
+    }
+  }
+
+  /// 完成会话并跳转结果页
+  Future<void> _finishQuiz() async {
+    if (_finishing) return;
+    _finishing = true;
+    _autoAdvanceTimer?.cancel();
+    final quiz = widget.quiz;
+    await quiz.completeSession();
+    if (mounted) {
+      context.go('/result/${quiz.currentSession!.id}');
+    }
+  }
+
+  Future<void> _gradeWithAi(Question question, String userAnswer) async {
     final settings = context.read<SettingsProvider>();
     if (!settings.hasLLM) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -324,6 +346,143 @@ class _PerQuestionViewState extends State<_PerQuestionView> {
         ],
       ),
     );
+  }
+}
+
+/// PageView 单页：题目卡片 + 底部操作区（确认答案 / 查看结果 / 答错提示）
+class _QuestionPage extends StatelessWidget {
+  final QuizProvider quiz;
+  final Question question;
+  final QuizAnswer? answered;
+  final String? pendingAnswer;
+  final bool isLast;
+  final void Function(String answer) onSelectionChanged;
+  final void Function(bool isCorrect) onConfirmed;
+  final void Function() onNext;
+  final void Function() onFinish;
+  final void Function(String answer)? onAiGrade;
+
+  const _QuestionPage({
+    super.key,
+    required this.quiz,
+    required this.question,
+    this.answered,
+    this.pendingAnswer,
+    required this.isLast,
+    required this.onSelectionChanged,
+    required this.onConfirmed,
+    required this.onNext,
+    required this.onFinish,
+    this.onAiGrade,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final answered = this.answered;
+    final confirmed = answered != null;
+
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: QuizCard(
+              question: question,
+              showAnswer: confirmed,
+              initialAnswer: answered?.userAnswer ?? pendingAnswer,
+              onSelectionChanged: confirmed ? null : onSelectionChanged,
+              onAiGrade: confirmed ? onAiGrade : null,
+              typeRowTrailing: _buildTypeRowTrailing(confirmed, answered),
+            ),
+          ),
+        ),
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: _buildBottom(answered),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// 题型行右槽位：未确认 → 「确认答案 ✓」；答错已确认 → 「下一题」
+  /// （答对由自动跳题接管，最后一题底部已有「查看结果」按钮）
+  Widget? _buildTypeRowTrailing(bool confirmed, QuizAnswer? answered) {
+    if (!confirmed) return _buildConfirmButton();
+    if (answered!.isCorrect || isLast) return null;
+    return _buildNextButton();
+  }
+
+  /// 「确认答案 ✓」按钮 — 放在题型标签行最右侧，方便点按
+  Widget _buildConfirmButton() {
+    final hasAnswer = pendingAnswer != null && pendingAnswer!.isNotEmpty;
+    return FilledButton(
+      style: FilledButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      onPressed: hasAnswer
+          ? () async {
+              final result = await quiz.submitAnswer(pendingAnswer!);
+              onConfirmed(result.isCorrect);
+            }
+          : null,
+      child: const Text('确认答案 ✓'),
+    );
+  }
+
+  /// 「下一题」按钮 — 答错确认后出现在题型行最右侧，点击手动跳题
+  Widget _buildNextButton() {
+    return FilledButton(
+      style: FilledButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+      onPressed: onNext,
+      child: const Text('下一题 →'),
+    );
+  }
+
+  Widget _buildBottom(QuizAnswer? answered) {
+    final buttonStyle = FilledButton.styleFrom(
+      textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    );
+
+    if (answered == null) {
+      // 未作答：确认按钮已移到题型行最右侧，底部留空
+      return const SizedBox.shrink();
+    }
+
+    if (isLast) {
+      // 最后一题已作答：查看结果
+      return SizedBox(
+        height: 52,
+        child: FilledButton(
+          style: buttonStyle,
+          onPressed: onFinish,
+          child: const Text('查看结果 📊'),
+        ),
+      );
+    }
+
+    if (!answered.isCorrect) {
+      // 答错停留：题型行有「下一题」按钮，也可滑动切换
+      return Center(
+        child: Text(
+          '答错了 · 点「下一题」或左右滑动',
+          style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+        ),
+      );
+    }
+
+    // 答对：自动跳题中，无需底部操作
+    return const SizedBox.shrink();
   }
 }
 

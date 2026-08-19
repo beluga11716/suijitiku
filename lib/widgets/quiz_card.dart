@@ -13,6 +13,7 @@ class QuizCard extends StatefulWidget {
   final String? userAnswer; // 外部控制的答案（试卷模式）
   final void Function(String answer)? onSelectionChanged;
   final void Function(String answer)? onAiGrade; // 主观题 AI 评分回调
+  final Widget? typeRowTrailing; // 题型行最右侧的附加操作（逐题模式「确认答案」按钮）
 
   const QuizCard({
     super.key,
@@ -22,6 +23,7 @@ class QuizCard extends StatefulWidget {
     this.userAnswer,
     this.onSelectionChanged,
     this.onAiGrade,
+    this.typeRowTrailing,
   });
 
   @override
@@ -134,7 +136,7 @@ class _QuizCardState extends State<QuizCard> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 题型标签
+        // 题型标签 + 行最右侧操作（逐题模式「确认答案」按钮）
         Row(
           children: [
             Chip(
@@ -146,16 +148,22 @@ class _QuizCardState extends State<QuizCard> {
             ),
             if (q.chapter != null) ...[
               const SizedBox(width: 8),
-              Chip(
-                label: Text(q.chapter!,
-                    style: const TextStyle(fontSize: 12)),
-                materialTapTargetSize:
-                    MaterialTapTargetSize.shrinkWrap,
-                visualDensity: VisualDensity.compact,
-                backgroundColor:
-                    theme.colorScheme.secondaryContainer,
+              Flexible(
+                child: Chip(
+                  label: Text(q.chapter!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12)),
+                  materialTapTargetSize:
+                      MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                  backgroundColor:
+                      theme.colorScheme.secondaryContainer,
+                ),
               ),
             ],
+            const Spacer(),
+            if (widget.typeRowTrailing != null) widget.typeRowTrailing!,
           ],
         ),
         const SizedBox(height: 12),

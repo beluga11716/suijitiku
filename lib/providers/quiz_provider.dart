@@ -35,8 +35,6 @@ class QuizProvider extends ChangeNotifier {
 
   Question get currentQuestion => _questions[_currentIndex];
 
-  bool get isLastQuestion => _currentIndex >= _questions.length - 1;
-
   bool get isExamMode => _currentSession?.quizStyle == 'exam';
 
   bool get isCompleted => _currentSession?.status == 'completed';
@@ -157,24 +155,13 @@ class QuizProvider extends ChangeNotifier {
     return answer;
   }
 
-  /// 移到下一题（逐题模式）
-  Future<void> nextQuestion() async {
-    if (_currentIndex < _questions.length - 1) {
-      _currentIndex++;
-      // 持久化当前进度
-      await _saveProgress();
-    } else {
-      // 已经是最后一题，完成会话
-      await completeSession();
+  /// 滑动跳转到指定题（逐题模式），持久化进度
+  Future<void> goToQuestion(int index) async {
+    if (index < 0 || index >= _questions.length || index == _currentIndex) {
+      return;
     }
-    notifyListeners();
-  }
-
-  /// 移到上一题（逐题模式）
-  void previousQuestion() {
-    if (_currentIndex > 0) {
-      _currentIndex--;
-    }
+    _currentIndex = index;
+    await _saveProgress();
     notifyListeners();
   }
 

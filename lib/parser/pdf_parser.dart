@@ -1,50 +1,61 @@
-import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:syncfusion_flutter_pdf/pdf.dart';
 
 /// PDF 解析器
 ///
-/// 使用 syncfusion_flutter_pdf 提取文本。
-/// 如果 syncfusion 不可用，提供降级方案。
+/// 使用 syncfusion_flutter_pdf 提取文本：
+/// - 支持 FlateDecode 压缩流 + CID 字体（ToUnicode 映射）——旧 BT/ET
+///   降级方案对压缩流完全无效，已移除
+/// - 按「视觉行」重组（extractTextLines），题号/选项/段落行保持完整，
+///   交给 QuestionExtractor 按题号切分
+/// - 解析失败抛异常，由导入流程提示用户
 class PdfParser {
   /// 从 PDF 字节数组提取纯文本
-  ///
-  /// 当前使用纯文本降级方案（搜索 PDF 流中的文本）。
-  /// TODO: 集成 syncfusion_flutter_pdf 获得更准确的解析。
   static String parseBytes(List<int> bytes) {
+    final doc = PdfDocument(inputBytes: Uint8List.fromList(bytes));
     try {
-      // 降级方案：搜索 PDF 流中的可打印文本
-      // PDF 文本通常在 BT...ET 块中，在 Tj/TJ 操作符里
-      // PDF 文本提取：先用 utf-8 解码，失败则回退 latin-1（保留原始字节）
-      String content;
-      try {
-        content = utf8.decode(bytes);
-      } catch (_) {
-        content = latin1.decode(bytes);
-      }
-
-      // 提取 BT...ET 块中的文本
-      final btPattern = RegExp(r'BT(.*?)ET', dotAll: true);
-      final texts = <String>[];
-
-      for (final match in btPattern.allMatches(content)) {
-        final block = match.group(1)!;
-        // 搜索 Tj 操作符: (text) Tj
-        final tjPattern = RegExp(r'\((.*?)\)\s*Tj');
-        for (final tj in tjPattern.allMatches(block)) {
-          texts.add(tj.group(1)!);
-        }
-      }
-
-      if (texts.isNotEmpty) {
-        return texts.join('\n');
-      }
-
-      // 如果没找到文本块，尝试提取所有可读文本
-      final printable = content.replaceAll(
-          RegExp(r'[^\x20-\x7E一-鿿　-〿＀-￯\n]'),
-          '');
-      return printable;
-    } catch (e) {
-      throw Exception('解析 PDF 失败: $e');
+      final lines = PdfTextExtractor(doc).extractTextLines();
+      return normalizeFragments(lines.map((l) => l.text).join('\n'));
+    } finally {
+      doc.dispose();
     }
+  }
+
+  /// 修复 PDF 文本碎片化（extractTextLines 把题号/答案/选项标签拆成独立行）：
+  /// 1. "1\n．\n内容" → "1．内容"（题号与标点分离）
+  /// 2. "（\nBCD\n）。" → "（BCD）。"（答案括号分离）
+  /// 3. "A\n．\n内容" → "A．内容"（选项标签分离）
+  /// 4. 剔除独立数字行（页眉/页脚页码）
+  static String normalizeFragments(String text) {
+    var t = text;
+
+    // 1. 题号碎片
+    t = t.replaceAllMapped(
+      RegExp(r'\n\s*(\d{1,3})\s*\n\s*([．、.])\s*\n'),
+      (m) => '\n${m.group(1)}${m.group(2)}',
+    );
+
+    // 2. 答案括号碎片："（\nBCD\n）。" / "（ A\n）" / "（\nA）" → "（BCD）。" / "（A）"
+    //    统一规则兼容括号与答案在同一行或分行的各种组合
+    t = t.replaceAllMapped(
+      RegExp(r'[（(]\s*\n?\s*([A-Ea-e]{1,3})\s*\n?\s*[）)]'),
+      (m) => '（${m.group(1)!}）',
+    );
+    t = t.replaceAllMapped(
+      RegExp(r'[（(]\s*\n?\s*(对|错|正确|错误|√|×|✓|✗)\s*\n?\s*[）)]'),
+      (m) => '（${m.group(1)!}）',
+    );
+
+    // 3. 选项标签碎片
+    t = t.replaceAllMapped(
+      RegExp(r'(?<![0-9A-Za-z])([A-E])\s*\n\s*([．、.])\s*\n'),
+      (m) => '${m.group(1)}${m.group(2)}',
+    );
+
+    // 4. 独立数字行（页码）
+    t = t.replaceAll(RegExp(r'^\s*\d{1,3}\s*$', multiLine: true), '');
+
+    return t;
   }
 }

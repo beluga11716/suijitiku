@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 import 'package:file_picker/file_picker.dart';
 import '../providers/bank_provider.dart';
 import '../providers/current_bank_provider.dart';
-import '../providers/wrong_book_provider.dart';
 import '../providers/settings_provider.dart';
 import '../database/dao.dart';
 import '../parser/docx_parser.dart';
@@ -30,6 +29,10 @@ class _HomeScreenState extends State<HomeScreen> {
   int _totalQuizzes = 0;
   double _accuracy = 0.0;
   int _wrongCount = 0;
+  // 错题提醒当前统计的题库（切换题库后重载错题数）
+  String? _wrongCountBankId;
+  // dispose 中不能再通过 context 查 ancestor，须在 didChangeDependencies 缓存引用
+  CurrentBankProvider? _currentBankProvider;
 
   @override
   void initState() {
@@ -37,17 +40,33 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadStats());
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final provider = context.read<CurrentBankProvider>();
+    if (!identical(provider, _currentBankProvider)) {
+      _currentBankProvider?.removeListener(_onCurrentBankChanged);
+      _currentBankProvider = provider;
+      provider.addListener(_onCurrentBankChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    _currentBankProvider?.removeListener(_onCurrentBankChanged);
+    super.dispose();
+  }
+
   Future<void> _loadStats() async {
     final bankProv = context.read<BankProvider>();
-    final wrongProv = context.read<WrongBookProvider>();
     final currentProv = context.read<CurrentBankProvider>();
     final totalQuestions = await _dao.getTotalQuestionCount();
     final totalBanks = await _dao.getTotalBankCount();
     final totalQuizzes = await _dao.getTotalQuizCount();
     final accuracy = await _dao.getOverallAccuracy();
     await bankProv.loadBanks();
-    await wrongProv.loadWrongQuestions();
     await currentProv.init();
+    await _refreshWrongCount();
 
     if (mounted) {
       setState(() {
@@ -55,9 +74,41 @@ class _HomeScreenState extends State<HomeScreen> {
         _totalBanks = totalBanks;
         _totalQuizzes = totalQuizzes;
         _accuracy = accuracy;
-        _wrongCount = wrongProv.count;
       });
     }
+  }
+
+  /// 重载当前题库的错题数（切换题库期间完成的旧结果会被丢弃）
+  Future<void> _refreshWrongCount() async {
+    final bankId = context.read<CurrentBankProvider>().currentBankId;
+    final count = await _loadWrongCount(bankId);
+    if (!mounted ||
+        bankId != context.read<CurrentBankProvider>().currentBankId) {
+      return;
+    }
+    setState(() {
+      _wrongCountBankId = bankId;
+      _wrongCount = count;
+    });
+  }
+
+  /// 当前题库的错题数（未选中题库 → 0）
+  Future<int> _loadWrongCount(String? bankId) async {
+    if (bankId == null) return 0;
+    final wrong = await _dao.getWrongQuestionsByBank(bankId);
+    return wrong.length;
+  }
+
+  /// 切换题库后，错题提醒同步改为统计新题库的错题
+  void _onCurrentBankChanged() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (context.read<CurrentBankProvider>().currentBankId ==
+          _wrongCountBankId) {
+        return;
+      }
+      _refreshWrongCount();
+    });
   }
 
   // ==================== 导入逻辑 ====================

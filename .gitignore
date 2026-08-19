@@ -51,6 +51,7 @@ app.*.map.json
 # Claude session files (project context, not for release)
 handoff.md
 CLAUDE.md
+AGENTS.md
 CHANGELOG.md
 
 # Android Studio will place build artifacts here

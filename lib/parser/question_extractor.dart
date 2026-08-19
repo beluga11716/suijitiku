@@ -43,7 +43,7 @@ class QuestionExtractor {
 
       // Step 2: 按题型分割
       final typePattern =
-          RegExp(r'([一二三四五]、\s*(判断|单选|多选|填空|简答|问答|主观|思考)[题]?)');
+          RegExp(r'([一二三四五]、\s*(判断|单选|多项|多选|填空|简答|问答|主观|思考)[题]?)');
       final typeBlocks = _splitByPattern(chapterText, typePattern);
 
       QuestionType? currentType;
@@ -52,27 +52,22 @@ class QuestionExtractor {
         if (typePair.key.isNotEmpty) {
           currentType = _parseTypeHeader(typePair.key);
         }
-        // 优先用标题推断的题型，其次用 section header 推断的题型，最后用全局题型
+        // 优先用 section header 的题型，其次标题推断，最后全局题型
         final effectiveType =
-            chapterType ?? currentType ?? globalType ?? QuestionType.singleChoice;
+            currentType ?? chapterType ?? globalType ?? QuestionType.singleChoice;
 
         // Step 3: 按题号提取每道题
         final questionsInBlock =
             _extractQuestions(typePair.value, effectiveType, chapterName);
         questions.addAll(questionsInBlock);
       }
+    }
 
-      // 如果题型分割后没有提取到题目（或只有一段），尝试直接提取
-      if (questions.isEmpty ||
-          (typeBlocks.length <= 1 && chapters.length == 1)) {
-        final directType =
-            globalType ?? QuestionType.singleChoice;
-        final directQuestions =
-            _extractQuestions(cleaned, directType, null);
-        if (directQuestions.isNotEmpty) {
-          return directQuestions;
-        }
-      }
+    // 兜底：按章节/题型分割后仍无题目（无结构化标题的文档），直接按题号提取全文
+    if (questions.isEmpty) {
+      final directType =
+          globalType ?? QuestionType.singleChoice;
+      return _extractQuestions(cleaned, directType, null);
     }
 
     return questions;
@@ -146,8 +141,10 @@ class QuestionExtractor {
   /// 解析题型标题
   static QuestionType? _parseTypeHeader(String header) {
     if (header.contains('判断')) return QuestionType.trueFalse;
+    if (header.contains('多选') || header.contains('多项')) {
+      return QuestionType.multiChoice;
+    }
     if (header.contains('单选')) return QuestionType.singleChoice;
-    if (header.contains('多选')) return QuestionType.multiChoice;
     if (header.contains('填空')) return QuestionType.fillBlank;
     if (header.contains('简答') ||
         header.contains('问答') ||
@@ -173,30 +170,67 @@ class QuestionExtractor {
 
     final questions = <ParsedQuestion>[];
 
-    // 匹配题号：数字．/ 数字. / 数字、/ 数字．
-    // 支持题号前无换行（紧凑格式）和题号前有换行（常规格式）
-    // 前缀：字符串开头 / 换行 / 非字母数字字符后（中文、括号等都行）
+    // 匹配题号：数字．/ 数字. / 数字、
+    // 前缀排除数字/字母/等号/小数点，后缀不能紧跟数字——
+    // 避免 "MPC=0.8" / "边际消费倾向为0.8，" 中的小数被当成题号
     final questionPattern = RegExp(
-        r'(?<![0-9A-Za-z])\s*(\d{1,3})\s*[．、.]\s*',
+        r'(?<![0-9A-Za-z.=])\s*(\d{1,3})\s*[．、.]\s*(?!\d)',
         multiLine: true);
 
     final matches = questionPattern.allMatches(block).toList();
 
     if (matches.isEmpty) return questions;
 
+    final segments = <String>[];
     for (int i = 0; i < matches.length; i++) {
       final start = matches[i].start;
       final end =
           i < matches.length - 1 ? matches[i + 1].start : block.length;
-      final questionText = block.substring(start, end).trim();
+      segments.add(block.substring(start, end).trim());
+    }
 
+    // 漏编号的题（题干不带题号）：按内嵌答案标记二次切分
+    final expanded = _recoverUnnumberedSegments(segments, type);
+
+    for (final questionText in expanded) {
       final parsed = _parseSingleQuestion(questionText, type, chapter);
       if (parsed != null) {
         questions.add(parsed);
       }
     }
 
-    return questions;
+    return _mergeTruncatedQuestions(questions);
+  }
+
+  /// 后处理：无答案且无选项的残题（跨行题干被错误切分）与后随的无题号残段合并
+  ///
+  /// 切分失误时前段题干截断（无答案无选项）、后段是无题号的续行
+  /// （如"体现了马克思主义（D） 的品格。"）→ 合并还原为完整题目。
+  /// 判断题残题会被补上默认选项，故判断题只要无答案即视为残题。
+  static List<ParsedQuestion> _mergeTruncatedQuestions(
+      List<ParsedQuestion> questions) {
+    final merged = <ParsedQuestion>[];
+    for (var i = 0; i < questions.length; i++) {
+      final q = questions[i];
+      final next = i + 1 < questions.length ? questions[i + 1] : null;
+      final isTruncated = q.answer.isEmpty &&
+          (q.options.isEmpty || q.type == QuestionType.trueFalse);
+      if (isTruncated && next != null && !next.hasQuestionNumber) {
+        merged.add(ParsedQuestion(
+          type: next.type,
+          stem: '${q.stem}\n${next.stem}',
+          options: next.options,
+          answer: next.answer,
+          explanation: next.explanation ?? q.explanation,
+          chapter: q.chapter ?? next.chapter,
+          hasQuestionNumber: q.hasQuestionNumber || next.hasQuestionNumber,
+        ));
+        i++; // 跳过下一题（已并入本题）
+      } else {
+        merged.add(q);
+      }
+    }
+    return merged;
   }
 
   /// 提取紧凑格式的判断题（所有题在同一行/段落）
@@ -216,15 +250,22 @@ class QuestionExtractor {
 
     final questions = <ParsedQuestion>[];
     final questionPattern = RegExp(
-        r'(?<![0-9A-Za-z])\s*(\d{1,3})\s*[．、.]\s*', multiLine: true);
+        r'(?<![0-9A-Za-z.=])\s*(\d{1,3})\s*[．、.]\s*(?!\d)', multiLine: true);
     final matches = questionPattern.allMatches(normalized).toList();
 
+    final segments = <String>[];
     for (int i = 0; i < matches.length; i++) {
       final start = matches[i].start;
       final end =
           i < matches.length - 1 ? matches[i + 1].start : normalized.length;
-      final questionText = normalized.substring(start, end).trim();
+      segments.add(normalized.substring(start, end).trim());
+    }
 
+    // 漏编号的判断题：按「答案标记行」二次切分
+    final expanded =
+        _recoverUnnumberedSegments(segments, QuestionType.trueFalse);
+
+    for (final questionText in expanded) {
       final parsed =
           _parseSingleQuestion(questionText, QuestionType.trueFalse, chapter);
       if (parsed != null) {
@@ -232,7 +273,62 @@ class QuestionExtractor {
       }
     }
 
-    return questions;
+    return _mergeTruncatedQuestions(questions);
+  }
+
+  /// 二次切分漏编号的题（题干不带题号，被并进上一题的段落）：
+  /// - 判断题：剩余文本中以 （√）/（×）/（对）/（错）/（A） 结尾的行是新题的题干
+  /// - 选择题：剩余文本中含内嵌空格答案（如 "…（  B  ）…"）的行是新题的题干
+  /// 答案行（答案/解析/解释/参考开头）不参与切分。
+  /// 只有上一行是完整问题（句尾标点 / 选项标记 / 答案括号结尾）时才切分——
+  /// 跨行题干的续行也含答案括号（如"体现了马克思主义（D） 的品格。"），
+  /// 但其上一行以"地/的/发"等结尾，不应切分。
+  static List<String> _recoverUnnumberedSegments(
+      List<String> segments, QuestionType type) {
+    final result = <String>[];
+    final pending = List<String>.from(segments);
+
+    // 判断题答案标记：行尾的 （√）/（×）/（对）/（错）/（A）
+    final markLine =
+        RegExp(r'[（(]\s*(对|错|正确|错误|√|×|✓|✗|[A-Ea-e]{1,3})\s*[）)]\s*$');
+    // 内嵌空格答案：行中任意位置的 （ B ）/（ ACD  ）
+    final blankLine = RegExp(r'[（(]\s*[A-Ea-e]{1,3}\s*[）)]');
+    // 上一行像完整问题的结尾：句尾标点 / 答案括号结尾 / 含选项标记
+    final completeEnd = RegExp(r'[。？?！!…”"」』）)]\s*$|[A-E]\s*[．、.]');
+
+    bool isSkipLine(String line) =>
+        line.startsWith('答案') ||
+        line.startsWith('解析') ||
+        line.startsWith('解释') ||
+        line.startsWith('参考');
+
+    while (pending.isNotEmpty) {
+      final seg = pending.removeAt(0);
+      final lines = seg.split('\n');
+      var splitAt = -1;
+      if (lines.length >= 2) {
+        for (var i = 1; i < lines.length; i++) {
+          final line = lines[i].trim();
+          if (line.isEmpty || isSkipLine(line)) continue;
+          // 判断题只认答案标记；选择题两种都认
+          final hasMarker = markLine.hasMatch(line) ||
+              (type != QuestionType.trueFalse && blankLine.hasMatch(line));
+          if (!hasMarker) continue;
+          // 上一行必须是完整问题的结尾，否则该行只是跨行题干的续行
+          if (!completeEnd.hasMatch(lines[i - 1].trim())) continue;
+          splitAt = i;
+          break;
+        }
+      }
+      if (splitAt >= 0) {
+        // 切成两段继续检查，前段回队列头部保持顺序
+        pending.insert(0, lines.sublist(splitAt).join('\n'));
+        pending.insert(0, lines.sublist(0, splitAt).join('\n'));
+      } else {
+        result.add(seg);
+      }
+    }
+    return result;
   }
 
   /// 解析单道题
@@ -280,23 +376,70 @@ class QuestionExtractor {
       }
     }
 
-    // 去掉题号前缀
+    // 去掉题号前缀（记录是否带题号，供截断合并后处理使用）
+    final hasQuestionNumber =
+        RegExp(r'^\s*\d{1,3}\s*[．、.]').hasMatch(firstLine);
     stem = stem.replaceFirst(RegExp(r'^\s*\d{1,3}\s*[．、.]\s*'), '').trim();
+
+    // 题干中间的内嵌空格答案："…收入（  B  ）外国公民…" → 提取字母，空格保留为（ ）
+    final blankPattern = RegExp(r'[（(]\s*([A-Ea-e]{1,3})\s*[）)]');
+    if (extractedAnswer == null) {
+      final blankMatch = blankPattern.firstMatch(stem);
+      if (blankMatch != null) {
+        extractedAnswer = blankMatch.group(1)!.toUpperCase();
+        stem = stem.replaceRange(blankMatch.start, blankMatch.end, '（ ）');
+      }
+    }
+
+    // 剥离「答案：/解析：」行（不应混入选项），并从中提取答案与解析
+    String optionText = remainingText;
+    String? answerLineValue;
+    String? explainLineValue;
+    if (remainingText.isNotEmpty) {
+      final stripped = _stripAnswerLines(remainingText);
+      optionText = stripped.$1;
+      answerLineValue = stripped.$2;
+      explainLineValue = stripped.$3;
+    }
+
+    // 选项标记之前的文本若是题干续行（跨行题干），合并进题干并提取内嵌答案
+    if (optionText.isNotEmpty) {
+      final firstOpt = RegExp(r'[A-E]\s*[．、.]').firstMatch(optionText);
+      if (firstOpt != null && firstOpt.start > 0) {
+        var prefix = optionText.substring(0, firstOpt.start).trim();
+        if (prefix.isNotEmpty) {
+          // 续行中的答案括号提取答案并替换为空格（不泄露答案）
+          final blankMatch = blankPattern.firstMatch(prefix);
+          if (blankMatch != null) {
+            extractedAnswer ??= blankMatch.group(1)!.toUpperCase();
+            prefix =
+                prefix.replaceRange(blankMatch.start, blankMatch.end, '（ ）');
+          }
+          stem = '$stem\n$prefix';
+          optionText = optionText.substring(firstOpt.start);
+        }
+      }
+    }
 
     // 解析选项
     List<String> options;
-    if (remainingText.isNotEmpty) {
-      options = _extractOptions(remainingText);
+    if (optionText.isNotEmpty) {
+      options = _extractOptions(optionText);
+      // 剥离答案行后仍无选项标记时，尝试第一行同行选项
+      if (options.isEmpty) {
+        final firstLineOptions = _extractOptions(firstLine);
+        if (firstLineOptions.isNotEmpty) options = firstLineOptions;
+      }
     } else {
       // 选项可能在同一行（空格分隔）
       options = _extractOptions(firstLine);
     }
 
-    // 如果选项提取失败，尝试在 remainingText 中找答案
-    if (extractedAnswer == null && remainingText.isNotEmpty) {
+    // 如果选项提取失败，尝试在 optionText 中找答案
+    if (extractedAnswer == null && optionText.isNotEmpty) {
       // 先尝试中文答案
       final chineseInRemaining =
-          chineseAnswerPattern.firstMatch(remainingText);
+          chineseAnswerPattern.firstMatch(optionText);
       if (chineseInRemaining != null) {
         final raw = chineseInRemaining.group(1)!;
         extractedAnswer =
@@ -306,11 +449,16 @@ class QuestionExtractor {
       } else {
         // 再尝试字母答案
         final letterInRemaining =
-            letterAnswerPattern.firstMatch(remainingText);
+            letterAnswerPattern.firstMatch(optionText);
         if (letterInRemaining != null) {
           extractedAnswer = letterInRemaining.group(1)!.toUpperCase();
         }
       }
+    }
+
+    // 「答案：B」/「答案：错误」行作为答案兜底
+    if (extractedAnswer == null && answerLineValue != null) {
+      extractedAnswer = _normalizeAnswerValue(answerLineValue);
     }
 
     // 提取解析/参考答案（主观题）
@@ -324,6 +472,11 @@ class QuestionExtractor {
         extractedAnswer = answerPair.key;
         explanation = answerPair.value;
       }
+    }
+
+    // 客观题的「解析：/解释：」行作为解析展示
+    if (explanation == null && explainLineValue != null) {
+      explanation = explainLineValue;
     }
 
     // 推断题型
@@ -357,6 +510,17 @@ class QuestionExtractor {
     }
     // 没有选项也没有提取到答案 → 保持默认题型（标题推断的结果）
 
+    // 判断题没有选项时（如只有 √/× 标记），补默认 ["正确", "错误"]
+    if (type == QuestionType.trueFalse && options.isEmpty) {
+      options = ['正确', '错误'];
+      // 将对/错答案映射为 A/B（与 OptionTile label 一致）
+      if (extractedAnswer == '对') {
+        extractedAnswer = 'A';
+      } else if (extractedAnswer == '错') {
+        extractedAnswer = 'B';
+      }
+    }
+
     return ParsedQuestion(
       type: type,
       stem: stem,
@@ -364,7 +528,70 @@ class QuestionExtractor {
       answer: extractedAnswer ?? '',
       explanation: explanation,
       chapter: chapter,
+      hasQuestionNumber: hasQuestionNumber,
     );
+  }
+
+  /// 从剩余文本中剥离「答案：/参考答案：」和「解析：/解释：」行
+  ///
+  /// 返回 (净化后的文本, 答案行内容, 解析行内容)。
+  /// 兼容同行格式「答案：B 解析：…」——从 解析/解释 处切开。
+  static (String, String?, String?) _stripAnswerLines(String text) {
+    final answerLinePattern =
+        RegExp(r'^\s*(?:参考答案|答案)\s*[：:]\s*(.+?)\s*$', multiLine: true);
+    final explainLinePattern =
+        RegExp(r'^\s*(?:解析|解释)\s*[：:]\s*(.+?)\s*$', multiLine: true);
+
+    String? answerValue;
+    String? explainValue;
+
+    // 紧邻「答案：」行的无标点短行（如「核心结论」这类装饰性小标题）视为杂行剥离，
+    // 避免混入最后一个选项
+    final strayLinePattern = RegExp(
+        r'^\s*[^\n。，；：！？、.．]{1,12}\s*$(?=\s*(?:参考答案|答案)\s*[：:])',
+        multiLine: true);
+    text = text.replaceAll(strayLinePattern, '');
+
+    final answerMatch = answerLinePattern.firstMatch(text);
+    if (answerMatch != null) {
+      var v = answerMatch.group(1)!.trim();
+      // 同行格式「答案：B 解析：…」：从 解析/解释 处切开
+      final explainIdx = v.indexOf(RegExp(r'\s+(?:解析|解释)\s*[：:]'));
+      if (explainIdx >= 0) {
+        explainValue = v
+            .substring(explainIdx)
+            .replaceFirst(RegExp(r'^\s*(?:解析|解释)\s*[：:]\s*'), '');
+        v = v.substring(0, explainIdx).trim();
+      }
+      if (v.isNotEmpty) answerValue = v;
+    }
+    if (explainValue == null) {
+      final explainMatch = explainLinePattern.firstMatch(text);
+      if (explainMatch != null) {
+        explainValue = explainMatch.group(1)!.trim();
+      }
+    }
+
+    final stripped = text
+        .replaceAll(answerLinePattern, '')
+        .replaceAll(explainLinePattern, '')
+        .trim();
+    return (stripped, answerValue, explainValue);
+  }
+
+  /// 标准化答案行内容：字母 → 大写，中文 → 对/错；其他（如长文本）返回 null
+  static String? _normalizeAnswerValue(String value) {
+    final v = value.trim();
+    if (RegExp(r'^[A-Za-z]+$').hasMatch(v)) {
+      return v.toUpperCase();
+    }
+    if (v.contains('对') || v.contains('正确') || v.contains('√') || v.contains('✓')) {
+      return '对';
+    }
+    if (v.contains('错') || v.contains('错误') || v.contains('×') || v.contains('✗')) {
+      return '错';
+    }
+    return null;
   }
 
   /// 提取主观题答案（解析/参考答案标记）
@@ -408,6 +635,7 @@ class QuestionExtractor {
   /// 支持格式：
   /// A．xxx（换行）B．yyy（换行）...
   /// A．xxx     B．yyy     C．zzz     D．www  （空格分隔，同行）
+  /// Y=C+I    B.Y=C+I+G     C....    D....   （第一个选项漏了字母标记，补 A.）
   static List<String> _extractOptions(String text) {
     // 匹配选项起始标记 A．/ A. / A、 等，按标记位置切分
     final optionPattern = RegExp(r'[A-E]\s*[．、.]');
@@ -416,6 +644,14 @@ class QuestionExtractor {
     if (matches.length < 2) return [];
 
     final options = <String>[];
+    // 第一个选项缺字母标记（与 B. 同行的裸文本，如 "Y=C+I    B.…"），补 A.
+    // 若首标记前文本独占一行（如题干续行），则不补。
+    final rawBefore = text.substring(0, matches.first.start);
+    if (rawBefore.isNotEmpty &&
+        !rawBefore.endsWith('\n') &&
+        rawBefore.trim().isNotEmpty) {
+      options.add('A.${rawBefore.trim()}');
+    }
     for (int i = 0; i < matches.length; i++) {
       final start = matches[i].start;
       final end =
@@ -437,6 +673,9 @@ class ParsedQuestion {
   final String? explanation;
   final String? chapter;
 
+  /// 题干是否带题号（不带题号的多为跨行题干的续行残段，可被合并回上一题）
+  final bool hasQuestionNumber;
+
   ParsedQuestion({
     required this.type,
     required this.stem,
@@ -444,6 +683,7 @@ class ParsedQuestion {
     required this.answer,
     this.explanation,
     this.chapter,
+    this.hasQuestionNumber = false,
   });
 
   /// 转换为完整的 Question 对象（导入时使用）

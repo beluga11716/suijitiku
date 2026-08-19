@@ -33,8 +33,19 @@ class DocxParser {
         final tTagPattern = RegExp(r'<w:t[^>]*>(.*?)</w:t>', dotAll: true);
 
         for (final t in tTagPattern.allMatches(pContent)) {
-          final text = t.group(1) ?? '';
-          texts.add(text);
+          var text = t.group(1) ?? '';
+          // 个别 .docx 的 <w:t> 内是未转义的原始 XML（如 <w:tab .../>），剥离标签
+          if (text.contains('<w:')) {
+            text = text.replaceAll(RegExp(r'<[^>]*>'), '');
+          }
+          // 还原常见 XML 实体（&amp; 必须最后，避免二次还原）
+          text = text
+              .replaceAll('&lt;', '<')
+              .replaceAll('&gt;', '>')
+              .replaceAll('&quot;', '"')
+              .replaceAll('&apos;', "'")
+              .replaceAll('&amp;', '&');
+          if (text.isNotEmpty) texts.add(text);
         }
 
         if (texts.isNotEmpty) {
