@@ -101,12 +101,22 @@ class AppScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final showNav = _shouldShowNav(context);
+    // 全屏页（刷题 /quiz/、结果 /result）必须阻止 shell page 自身被弹出
+    // （canPop: false → popDisposition=doNotPop）。
+    // Android 13+ 预测返回：交卷确认等 dialog 关闭后 root Navigator 会重新上报
+    // 「框架不处理返回键」→ 系统接管下一次返回手势直接销毁 Activity（app 退出）。
+    // shell page 标为 doNotPop 后，root Navigator 的 NavigationNotification
+    // 恒为 canHandlePop=true，返回键始终交由框架 → 页面自身的 BackButtonListener
+    // 处理（刷题页弹「退出刷题」确认，结果页回到对应列表）。dialog 在 shell
+    // page 之上，不受影响，仍可正常关闭。
+    final isFullScreen = _isFullScreenLocation(context);
 
-    return Scaffold(
-      body: child,
-      bottomNavigationBar: showNav
-          ? NavigationBar(
+    return PopScope(
+      canPop: !isFullScreen,
+      child: Scaffold(
+        body: child,
+        bottomNavigationBar: !isFullScreen
+            ? NavigationBar(
               selectedIndex: _calculateSelectedIndex(context),
               onDestinationSelected: (index) => _onItemTapped(index, context),
               destinations: const [
@@ -132,20 +142,20 @@ class AppScaffold extends StatelessWidget {
                 ),
               ],
             )
-          : null,
+            : null,
+      ),
     );
   }
 
-  /// 刷题和结果页面全屏显示，隐藏底部导航
-  bool _shouldShowNav(BuildContext context) {
+  /// 刷题和结果页面：全屏显示（隐藏底部导航）且必须阻止 shell page 被弹出
+  bool _isFullScreenLocation(BuildContext context) {
     try {
       final location = GoRouterState.of(context).uri.toString();
-      // 仅刷题中和结果页全屏隐藏导航栏
-      if (location.startsWith('/quiz/')) return false;
-      if (location.startsWith('/result')) return false;
-      return true;
+      if (location.startsWith('/quiz/')) return true;
+      if (location.startsWith('/result')) return true;
+      return false;
     } catch (_) {
-      return true;
+      return false;
     }
   }
 

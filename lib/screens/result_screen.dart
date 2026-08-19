@@ -49,42 +49,61 @@ class _ResultScreenState extends State<ResultScreen> {
     }
   }
 
+  /// 返回目标——与顶栏返回按钮一致：
+  /// 错题测试 → 错题测试列表（已完成 tab）；题库测试 → 刷题列表（已完成 tab）
+  String get _backPath => _session?.source == 'wrongbook'
+      ? '/wrongbook?sub=tests&tab=1'
+      : '/tests?tab=1';
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    Widget body;
     if (_loading) {
-      return Scaffold(
+      body = Scaffold(
         appBar: AppBar(title: const Text('结果')),
         body: const Center(child: CircularProgressIndicator()),
       );
-    }
-
-    if (_session == null) {
-      return Scaffold(
+    } else if (_session == null) {
+      body = Scaffold(
         appBar: AppBar(title: const Text('结果')),
         body: const Center(child: Text('结果不存在')),
       );
+    } else {
+      body = _buildResult(theme);
     }
 
+    // 与刷题页同一套返回键防御：BackButtonListener 系统级拦截 + PopScope 兜底，
+    // 行为 = 顶栏返回按钮（回到对应列表页，保留已完成 tab）。
+    // 没有这套拦截时，Android 13+ 上系统级返回会直接销毁 Activity（app 退出）。
+    return BackButtonListener(
+      onBackButtonPressed: () async {
+        context.go(_backPath);
+        return true;
+      },
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) context.go(_backPath);
+        },
+        child: body,
+      ),
+    );
+  }
+
+  Widget _buildResult(ThemeData theme) {
     final accuracy = _session!.answeredCount > 0
         ? (_session!.correctCount / _session!.answeredCount * 100)
             .toStringAsFixed(1)
         : '0';
-
-    // 根据 source 决定返回路径
-    // 错题测试 → 错题测试列表（已完成 tab）
-    // 题库测试 → 刷题列表（已完成 tab）
-    final backPath = _session!.source == 'wrongbook'
-        ? '/wrongbook?sub=tests&tab=1'
-        : '/tests?tab=1';
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('刷题结果'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go(backPath),
+          onPressed: () => context.go(_backPath),
         ),
       ),
       body: ListView(

@@ -22,9 +22,14 @@ class QuizScreen extends StatefulWidget {
 }
 
 class _QuizScreenState extends State<QuizScreen> {
+  bool _exitDialogOpen = false;
+
   void _showExitDialog(BuildContext context) {
+    // 防止连续按返回键叠出多个「退出刷题」dialog
+    if (_exitDialogOpen) return;
+    _exitDialogOpen = true;
     final quiz = context.read<QuizProvider>();
-    showDialog(
+    showDialog<bool>(
       context: context,
       useRootNavigator: true,
       builder: (dialogContext) => AlertDialog(
@@ -49,7 +54,7 @@ class _QuizScreenState extends State<QuizScreen> {
           ),
         ],
       ),
-    );
+    ).then((_) => _exitDialogOpen = false);
   }
 
   @override
@@ -562,10 +567,13 @@ class _ExamModeView extends StatelessWidget {
     );
 
     if (confirmed == true && context.mounted) {
+      // submitExam() 内部会置 loading=true → QuizScreen 切换为 loading
+      // Scaffold → _ExamModeView 被卸载，await 回来后 context.mounted 已为
+      // false。必须先捕获 GoRouter 与 sessionId，导航不依赖本 view 生命周期。
+      final router = GoRouter.of(context);
+      final sessionId = quiz.currentSession!.id;
       await quiz.submitExam();
-      if (context.mounted) {
-        context.go('/result/${quiz.currentSession!.id}');
-      }
+      router.go('/result/$sessionId');
     }
   }
 
