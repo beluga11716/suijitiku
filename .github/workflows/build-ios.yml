@@ -27,6 +27,13 @@ jobs:
       - name: Build iOS (no codesign)
         run: flutter build ios --release --no-codesign
 
+      - name: Sign with ldid (TrollStore compatible)
+        run: |
+          brew install ldid
+          # 用 entitlements 做完整签名
+          ldid -Sios/Runner/Release.entitlements build/ios/iphoneos/Runner.app/Runner
+          echo "Signed with ldid + entitlements successfully"
+
       - name: Package IPA
         run: |
           mkdir -p Payload
