@@ -27,7 +27,7 @@
 iOS 版本需要通过 Sideloadly 签名安装（免费 Apple ID，7 天有效期，到期重签即可，数据不丢失）：
 
 1. **下载 Sideloadly**：[sideloadly.io](https://sideloadly.io/)（Windows 版，免费）
-2. **iPhone 开启开发者模式**：设置 → 隐私与安全性 → 开发者模式 → 打开
+2. **iPhone 开启开发者模式**（仅 iOS 16+ 需要）：设置 → 隐私与安全性 → 开发者模式 → 打开。iOS 15 及更早版本无需此步
 3. **数据线连接 iPhone**，打开 Sideloadly
 4. **拖入下载的 `.ipa` 文件**，填入你的 Apple ID 邮箱，点 Start
 5. **首次安装后信任开发者**：设置 → 通用 → VPN 与设备管理 → 信任你的 Apple ID
@@ -53,7 +53,7 @@ iOS 版本需要通过 Sideloadly 签名安装（免费 Apple ID，7 天有效�
 ### 环境要求
 
 - Flutter SDK 3.44+
-- Windows 10+、Android 10+ 或 iOS 16+
+- Windows 10+、Android 10+ 或 iOS 13+
 
 ### 运行
 
