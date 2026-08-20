@@ -17,8 +17,11 @@ jobs:
 
       - run: flutter pub get
 
-      - name: Build IPA (no codesign)
-        run: flutter build ipa --release --no-codesign
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign
+
+      - name: Find Runner.app
+        run: find build -name "Runner.app" -type d
 
       - name: Package IPA
         run: |
