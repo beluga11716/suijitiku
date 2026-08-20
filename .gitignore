@@ -48,7 +48,9 @@ app.*.map.json
 # Release archives
 *.zip
 *.apk
+*.ipa
 release/
+Payload/
 
 # Claude session files (project context, not for release)
 handoff.md
