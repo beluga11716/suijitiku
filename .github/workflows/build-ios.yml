@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to upload IPA to (e.g. v1.0.1)'
+        required: true
 
 jobs:
   build-ios:
@@ -20,9 +25,6 @@ jobs:
       - name: Build iOS (no codesign)
         run: flutter build ios --release --no-codesign
 
-      - name: Find Runner.app
-        run: find build -name "Runner.app" -type d
-
       - name: Package IPA
         run: |
           mkdir -p Payload
@@ -33,6 +35,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 先尝试上传到已有 release，不存在则创建 draft
-          gh release upload "$GITHUB_REF_NAME" randomselector.ipa --clobber 2>/dev/null || \
-            gh release create "$GITHUB_REF_NAME" randomselector.ipa --draft --generate-notes --title "$GITHUB_REF_NAME"
+          TAG="${{ github.event.inputs.release_tag || github.ref_name }}"
+          echo "Uploading IPA to release: $TAG"
+          gh release upload "$TAG" randomselector.ipa --clobber
