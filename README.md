@@ -20,20 +20,7 @@
 | Android | `randomselector-v1.0.1-arm64-v8a.apk` | 绝大多数手机（2017 年后的设备） |
 | Android | `randomselector-v1.0.1-armeabi-v7a.apk` | 旧款 32 位设备 |
 | Android | `randomselector-v1.0.1-x86_64.apk` | x86 模拟器 |
-| iOS | `randomselector.ipa` | 需用 Sideloadly 签名安装（见下方说明） |
-
-### iOS 安装说明
-
-iOS 版本需要通过 Sideloadly 签名安装（免费 Apple ID，7 天有效期，到期重签即可，数据不丢失）：
-
-1. **下载 Sideloadly**：[sideloadly.io](https://sideloadly.io/)（Windows 版，免费）
-2. **iPhone 开启开发者模式**（仅 iOS 16+ 需要）：设置 → 隐私与安全性 → 开发者模式 → 打开。iOS 15 及更早版本无需此步
-3. **数据线连接 iPhone**，打开 Sideloadly
-4. **拖入下载的 `.ipa` 文件**，填入你的 Apple ID 邮箱，点 Start
-5. **首次安装后信任开发者**：设置 → 通用 → VPN 与设备管理 → 信任你的 Apple ID
-6. **7 天后 app 打不开**：重复第 4 步重新签名即可（数据保留）
-
-> 无需付费 Apple 开发者账号，每个用户用自己的免费 Apple ID 签名即可。
+| iOS | `randomselector.ipa` | 支持 iOS 13+，通过 TrollStore 或 Sideloadly 安装 |
 
 ## 功能
 
